@@ -3,7 +3,7 @@ from keras.layers import Dense
 from keras.optimizers import Adam
 import keras.backend as kb
 import numpy as np
-from typing import Callable, Any
+from typing import Callable, Any, Tuple
 
 
 class Critic(Sequential):
@@ -29,6 +29,7 @@ class Actor(Sequential):
             state_space_dimension: int,
             action_space_dimension: int,
             hidden_layer_size: int,
+            action_map: Callable
     ):
         super().__init__()
         self.add(
@@ -44,11 +45,23 @@ class Actor(Sequential):
                 activation="softmax"
             )
         )
+        self._action_space_dimension = action_space_dimension
+        self._action_map = action_map
+
+    def sample_action_from_policy(
+        self,
+        state: np.array
+    ) -> np.array:
+        action_probabilities = self.predict(state)
+        selected_action = np.random.choice(self._action_space_dimension, p=action_probabilities)
+        return self._action_map(selected_action)
 
 
 class PPOLearner:
     def _init_(
             self,
+            actor: Actor,
+            critic: Critic,
             horizon: int = 100,
             discount: float = 0.99,
             gae_parameter: float = 0.95,
@@ -57,10 +70,13 @@ class PPOLearner:
             critic_discount: float = 1,
             normalize_advantages: bool = True,
             n_actors: int = 1,
+            max_iterations: int = 100,
             learning_rate: float = 2e-4,
             batch_size: int = 10,
             epochs: int = 10
     ):
+        self.actor = actor
+        self.critic = critic
         self.horizon = horizon
         self.discount = discount
         self.gae_parameter = gae_parameter
@@ -69,6 +85,7 @@ class PPOLearner:
         self.critic_discount = critic_discount
         self.normalize_advantages = normalize_advantages
         self.n_actors = n_actors
+        self.max_iterations = max_iterations
         self.optimizer = Adam(
             learning_rate=learning_rate,
             epochs=epochs,
@@ -132,11 +149,10 @@ class PPOLearner:
 
     def update_critic(
             self,
-            critic: Critic,
             states: np.array,
             returns: np.array
     ) -> None:
-        critic.fit(
+        self.critic.fit(
             x=states,
             y=returns,
             loss="mse",
@@ -145,13 +161,12 @@ class PPOLearner:
 
     def update_actor(
             self,
-            actor: Actor,
             policy_probabilities: np.array,
             rewards: np.array,
-            values: np.arrayp,
+            values: np.array,
             advantages: np.array
     ) -> None:
-        actor.fit(
+        self.actor.fit(
             loss=self.make_ppo_loss_callback(
                 policy_probabilities=policy_probabilities,
                 rewards=rewards,
@@ -160,6 +175,50 @@ class PPOLearner:
             ),
             optimizer=self.optimizer
         )
+
+    def generate_trajectory(self, environment) -> Tuple[np.array, np.array, np.array, np.array, np.array]:
+        states = []
+        actions = []
+        rewards = []
+        values = []
+        policy_probabilities = []
+        state = environment._get_obs()
+        for step in range(self.horizon):
+            # Sample from policy and receive feedback from environment
+            action = self.actor.sample_action_from_policy(state)
+            new_state, reward, done, info = environment.step(action)
+
+            # Store information from step
+            states.append(state)
+            actions.append(action)
+            rewards.append(reward)
+            values.append(self.critic.predict(state))
+            policy_probabilities.append(self.actor.predict(state))
+
+            # Update state
+            state = new_state
+
+            # Reset state if task is done
+            if done:
+                environment.reset()
+
+        return np.array(states), np.array(actions), np.array(values), np.array(rewards), np.array(policy_probabilities)
+
+    def train(self, environment):
+        for _ in range(self.max_iterations):
+            states, actions, values, rewards, policy_probabilities = self.generate_trajectory(environment)
+            returns = self.calculate_returns(values, rewards)
+            advantages = self.calculate_advantages(values, returns)
+            self.update_critic(states, returns)
+            self.update_actor(policy_probabilities, rewards, values, advantages)
+
+
+
+
+
+
+
+
 
 
 
