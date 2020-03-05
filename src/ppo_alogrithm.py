@@ -13,6 +13,7 @@ from robot_environments.reacher_wall import ReacherWallEnv
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TOL = 1e-10
 
+
 class ActorCritic(nn.Module):
 
     def __init__(
@@ -70,10 +71,6 @@ class ActorCritic(nn.Module):
         action = Categorical(self.actor(state)).sample().item()
         return self.action_map[action]
 
-    def get_value_estimates_as_array(self, states: int = List[np.ndarray]) -> np.array:
-        states = torch.tensor(states).float()
-        return self.actor(states).detach().numpy()
-
 
 class PPOLearner:
 
@@ -86,16 +83,15 @@ class PPOLearner:
             critic_hidden_layer_units: List[int],
             actor_hidden_layer_units: List[int],
             random_init_box: Box,
-            n_steps_per_trajectory: int = 256,
-            n_trajectories_per_batch: int = 16,
-            n_epochs: int = 5,
+            n_steps_per_trajectory: int = 128,
+            n_trajectories_per_batch: int = 32,
+            n_epochs: int = 4,
             n_iterations: int = 100,
             learning_rate: float = 2e-3,
             discount: float = 0.99,
-            gae_param: float = 0.95,
             clipping_param: float = 0.2,
             critic_coefficient: float = 0.5,
-            entropy_coefficient: float = 1e-3,
+            entropy_coefficient: float = 1e-4,
             randomize_init_state: bool = True
     ):
         # Set environment attribute
@@ -120,7 +116,6 @@ class PPOLearner:
         self.n_epochs = n_epochs
         self.n_iterations = n_iterations
         self.discount = discount
-        self.gae_param = gae_param
         self.clipping_param = clipping_param
         self.critic_coefficient = critic_coefficient
         self.entropy_coefficient = entropy_coefficient
@@ -160,16 +155,6 @@ class PPOLearner:
         self.environment.reset()
 
         return states, rewards
-
-    def calculate_advantage_estimates(self, states: List[np.array], rewards: List[float]) -> List[float]:
-        values = self.policy.get_value_estimates_as_array(states)
-        advantage_estimates = []
-        advantage = 0
-        for t in reversed(range(self.n_steps_per_trajectory)):
-            delta = rewards[t] + self.discount*values[t + 1] - values[t]
-            advantage = delta + self.discount*self.gae_param*advantage
-            advantage_estimates.insert(0, advantage)
-        return advantage_estimates
 
     def calculate_discounted_rewards(self, states: List[np.array], rewards: List[float]) -> List[float]:
         discounted_rewards = []
@@ -233,7 +218,7 @@ class PPOLearner:
                     )
                 )
                 critic_loss = torch.mean((discounted_rewards - values).pow(2))
-                entropy_loss = torch.mean(policy_probabilities * torch.log(policy_probabilities))
+                entropy_loss = torch.mean(policy_probabilities * torch.log(policy_probabilities + TOL))
                 loss = (actor_loss + self.critic_coefficient*critic_loss + self.entropy_coefficient*entropy_loss)
 
                 # Perform gradient update
