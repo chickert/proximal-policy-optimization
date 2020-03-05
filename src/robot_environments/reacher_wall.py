@@ -11,6 +11,7 @@ from airobot.utils.common import euler2quat
 from airobot.utils.common import quat_multiply
 from airobot.utils.common import rotvec2quat
 from gym import spaces
+from sympy import Point, Line
 import pybullet as p
 
 
@@ -36,8 +37,13 @@ class ReacherWallEnv:
 													   [.5, 0, 0.4],
 													   ori,
 													   scaling=0.9)
-		self.wall_id = self.robot.pb_client.load_geom('box', size=[0.10,0.01,0.20], mass=0,
-													 base_pos=(0.5*self.goal + 0.5*self.init).tolist(),
+
+		self.wall_center = (0.5*self.goal + 0.5*self.init)
+		self.wall_length = 0.1
+		self.wall_start = self.wall_center + np.array([self.wall_length/2, 0, 0])
+		self.wall_end = self.wall_center - np.array([self.wall_length/2, 0, 0])
+		self.wall_id = self.robot.pb_client.load_geom('box', size=[self.wall_length, 0.01, 0.15], mass=0,
+													 base_pos=self.wall_center.tolist(),
 													 rgba=[1, 0, 0, 0.4])
 		self.marker_id = self.robot.pb_client.load_geom('box', size=0.05, mass=1,
 													 base_pos=self.goal.tolist(),
@@ -74,8 +80,14 @@ class ReacherWallEnv:
 		return state, reward, done, info
 
 	def compute_reward_reach_wall(self, state):
-		"""Fill in"""
-		raise NotImplementedError
+		if (self.wall_center[1] - self.goal[1] > 0) & (state[1] - self.wall_center[1] < 0) \
+				or (self.wall_center[1] - self.goal[1] < 0) & (state[1] - self.wall_center[1] > 0):
+			distance_to_goal = np.linalg.norm(self.goal - state, 2)
+			return np.exp(-2 * distance_to_goal ** 2)
+		else:
+			distance_to_intermediate_goal = np.linalg.norm(state - self.wall_end - np.array([0.02, 0, 0]), 2)
+			return np.exp(-2 * distance_to_intermediate_goal ** 2) - 1
+
 
 	def _get_obs(self):
 		gripper_pos = self.robot.arm.get_ee_pose()[0]
