@@ -1,97 +1,82 @@
-from typing import Callable, Any, Tuple, Union, Dict, List
+from typing import Tuple, Union, Dict, List
 
-import keras.backend as kb
 import numpy as np
-from keras.layers import Dense
-from keras.models import Sequential
-from keras.optimizers import Adam
+import torch
+import torch.nn as nn
+from gym.spaces import Box
+from torch.distributions import Categorical
 
 from robot_environments.pusher import PusherEnv
 from robot_environments.reacher import ReacherEnv
 from robot_environments.reacher_wall import ReacherWallEnv
-import matplotlib.pyplot as plt
 
-kb.set_floatx("float64")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+TOL = 1e-10
 
+class ActorCritic(nn.Module):
 
-class Critic(Sequential):
-    def __init__(
-            self,
-            state_space_dimension: int,
-            hidden_layer_units: List[int]
-    ):
-        super().__init__()
-        self.add(
-            Dense(
-                hidden_layer_units[0],
-                input_shape=(state_space_dimension,),
-                activation="relu"
-            )
-        )
-        for units in hidden_layer_units[1:]:
-            self.add(
-                Dense(
-                    units,
-                    activation="relu"
-                )
-            )
-        self.add(Dense(1))
-
-    def predict_value(
-            self,
-            state: List[float]
-    ) -> float:
-        return self.predict(np.array([state]))[0]
-
-
-class Actor(Sequential):
     def __init__(
             self,
             state_space_dimension: int,
             action_space_dimension: int,
-            hidden_layer_units: List[int],
-            action_map: Dict[int, np.array]
+            action_map: Dict[int, np.array],
+            actor_hidden_layer_units: List[int],
+            critic_hidden_layer_units: List[int],
+            non_linearity: nn.Module = nn.ReLU
     ):
-        super().__init__()
-        self.add(
-            Dense(
-                hidden_layer_units[0],
-                input_dim=state_space_dimension,
-                activation="relu"
-            )
-        )
-        for units in hidden_layer_units[1:]:
-            self.add(
-                Dense(
-                    units,
-                    activation="relu"
-                )
-            )
-        self.add(
-            Dense(
-                action_space_dimension,
-                activation="softmax"
-            )
-        )
-        self._action_space_dimension = action_space_dimension
-        self._action_map = action_map
+        super(ActorCritic, self).__init__()
 
-    def get_policy(
-            self,
-            state: List[float]
-    ) -> np.array:
-        return self.predict(np.array([state])).flatten()
+        # Make actor network
+        actor_layers = [
+            nn.Linear(state_space_dimension, actor_hidden_layer_units[0]),
+            non_linearity()
+        ]
+        for i in range(1, len(actor_hidden_layer_units)):
+            actor_layers += [
+                nn.Linear(actor_hidden_layer_units[i - 1], actor_hidden_layer_units[i]),
+                non_linearity()
+            ]
+        actor_layers += [
+            nn.Linear(actor_hidden_layer_units[-1], action_space_dimension),
+            nn.Softmax(dim=-1)
+        ]
+        self.actor = nn.Sequential(*actor_layers)
 
-    def sample_action_from_policy(
-        self,
-        state: List[float]
-    ) -> np.array:
-        action_probabilities = self.get_policy(state)
-        selected_action = np.random.choice(self._action_space_dimension, p=action_probabilities)
-        return self._action_map[selected_action]
+        # Make critic network
+        critic_layers = [
+            nn.Linear(state_space_dimension, critic_hidden_layer_units[0]),
+            non_linearity()
+        ]
+        for i in range(1, len(critic_hidden_layer_units)):
+            critic_layers += [
+                nn.Linear(critic_hidden_layer_units[i - 1], critic_hidden_layer_units[i]),
+                non_linearity()
+            ]
+        critic_layers += [
+            nn.Linear(critic_hidden_layer_units[-1], 1)
+        ]
+        self.critic = nn.Sequential(*critic_layers)
+
+        # Initialize other attributes
+        self.action_map = action_map
+
+    def forward(self, states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        policy_probabilities = self.actor(states)
+        values = self.critic(states)
+        return policy_probabilities, values
+
+    def sample_action(self, state: np.ndarray) -> np.ndarray:
+        state = torch.tensor(state).float()
+        action = Categorical(self.actor(state)).sample().item()
+        return self.action_map[action]
+
+    def get_value_estimates_as_array(self, states: int = List[np.ndarray]) -> np.array:
+        states = torch.tensor(states).float()
+        return self.actor(states).detach().numpy()
 
 
 class PPOLearner:
+
     def __init__(
             self,
             environment: Union[ReacherEnv, ReacherWallEnv, PusherEnv],
@@ -100,214 +85,166 @@ class PPOLearner:
             action_map: Dict[int, np.array],
             critic_hidden_layer_units: List[int],
             actor_hidden_layer_units: List[int],
-            horizon: int = 200,
+            random_init_box: Box,
+            n_steps_per_trajectory: int = 256,
+            n_trajectories_per_batch: int = 16,
+            n_epochs: int = 5,
+            n_iterations: int = 100,
+            learning_rate: float = 2e-3,
             discount: float = 0.99,
-            gae_parameter: float = 0.95,
-            clipping_parameter: float = 0.2,
+            gae_param: float = 0.95,
+            clipping_param: float = 0.2,
+            critic_coefficient: float = 0.5,
             entropy_coefficient: float = 1e-3,
-            critic_discount: float = 0.5,
-            normalize_advantages: bool = True,
-            max_iterations: int = 200,
-            batch_size: int = 64,
-            epochs: int = 10,
-            learning_rate: float = 1e-3
+            randomize_init_state: bool = True
     ):
-        #
+        # Set environment attribute
         self.environment = environment
-        self.actor = Actor(
+
+        # Initialize actor-critic policy network
+        self.policy = ActorCritic(
             state_space_dimension=state_space_dimension,
             action_space_dimension=action_space_dimension,
-            hidden_layer_units=actor_hidden_layer_units,
-            action_map=action_map
-        )
-        self.critic = Critic(
-            state_space_dimension=state_space_dimension,
-            hidden_layer_units=critic_hidden_layer_units
+            action_map=action_map,
+            actor_hidden_layer_units=actor_hidden_layer_units,
+            critic_hidden_layer_units=critic_hidden_layer_units,
         )
 
-        # Set optimizer attributes
-        self.optimizer = Adam(learning_rate=learning_rate)
+        # Initialize optimizer
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=learning_rate)
 
         # Set hyperparameter attributes
-        self.horizon = horizon
+        self.random_init_box = random_init_box
+        self.n_steps_per_trajectory = n_steps_per_trajectory
+        self.n_trajectories_per_batch = n_trajectories_per_batch
+        self.n_epochs = n_epochs
+        self.n_iterations = n_iterations
         self.discount = discount
-        self.gae_parameter = gae_parameter
-        self.clipping_parameter = clipping_parameter
+        self.gae_param = gae_param
+        self.clipping_param = clipping_param
+        self.critic_coefficient = critic_coefficient
         self.entropy_coefficient = entropy_coefficient
-        self.critic_discount = critic_discount
-        self.normalize_advantages = normalize_advantages
-        self.max_iterations = max_iterations
-        self.epochs = epochs
-        self.batch_size = batch_size
+        self.randomize_init_state = randomize_init_state
 
-    def calculate_returns(
-            self,
-            values: np.array,
-            rewards: np.array,
-    ) -> np.array:
-        returns = []
-        advantage_estimate = 0
-        for i in reversed(range(len(rewards) - 1)):
-            delta = rewards[i] + self.discount*values[i + 1] - values[i]
-            advantage_estimate = delta + self.discount*self.gae_parameter*advantage_estimate
-            returns.insert(0, advantage_estimate + values[i])
-        return np.array(returns)
+    def generate_trajectory(self) -> Tuple[List[np.ndarray], List[float]]:
 
-    def calculate_advantages(
-            self,
-            values: np.array,
-            returns: np.array,
-    ) -> np.array:
-        advantages = returns - values[:-1]
-        if self.normalize_advantages:
-            return (np.array(advantages) - np.mean(advantages)) / (np.std(advantages) + 1e-10)
-        else:
-            return advantages
-
-    def make_ppo_loss_callback(
-        self,
-        policy_probabilities: np.ndarray,
-        rewards: np.ndarray,
-        values: np.ndarray,
-        advantages: np.ndarray
-    ) -> Callable:
-        def loss(
-                dummy_target: Any,
-                updated_policy_probabilities: np.ndarray
-        ) -> float:
-            eps = 1e-10
-            ratio = kb.exp(
-                kb.log(updated_policy_probabilities + eps) - kb.log(policy_probabilities + eps)
-            )
-            actor_loss = -kb.mean(
-                kb.minimum(
-                    ratio * advantages,
-                    kb.clip(
-                        ratio,
-                        min_value=1 - self.clipping_parameter,
-                        max_value=1 + self.clipping_parameter
-                    ) * advantages
-                )
-            )
-            critic_loss = kb.mean(
-                kb.square(rewards - values)
-            )
-            entropy_loss = kb.mean(
-                (updated_policy_probabilities * kb.log(updated_policy_probabilities + eps))
-            )
-            return actor_loss + self.critic_discount*critic_loss + self.entropy_coefficient*entropy_loss
-        return loss
-
-    def update_critic(
-            self,
-            states: np.array,
-            returns: np.array
-    ) -> None:
-        self.critic.compile(
-            optimizer=self.optimizer,
-            loss="mse"
-        )
-        self.critic.fit(
-            x=states,
-            y=returns,
-            epochs=self.epochs,
-            batch_size=self.batch_size,
-            verbose=0
-        )
-
-    def update_actor(
-            self,
-            states: np.ndarray,
-            policy_probabilities: np.ndarray,
-            rewards: np.ndarray,
-            values: np.ndarray,
-            advantages: np.ndarray
-    ) -> None:
-        self.actor.compile(
-            optimizer=self.optimizer,
-            loss=[self.make_ppo_loss_callback(
-                policy_probabilities=policy_probabilities,
-                rewards=rewards,
-                values=values,
-                advantages=advantages
-            )],
-        )
-        self.actor.fit(
-            x=states,
-            y=states,  # dummy argument
-            epochs=self.epochs,
-            steps_per_epoch=int(np.round(self.horizon / self.batch_size)),
-            verbose=2
-        )
-
-    def generate_trajectory(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-
-        # Initialize trjectory
+        # Initialize trajectory
         states = []
         rewards = []
-        values = []
-        policy_probabilities = []
 
-        # Get initial state
-        state = self.environment._get_obs()
+        # Set initial state
+        init_state = self.environment.init
+        if self.randomize_init_state:
+            state = self.random_init_box.sample()
+        else:
+            state = init_state
+        self.environment.init = state
+        self.environment.reset()
 
         # Generate a sample trajectory under the current policy
-        for step in range(self.horizon):
+        for _ in range(self.n_steps_per_trajectory + 1):
+
             # Sample from policy and receive feedback from environment
-            action = self.actor.sample_action_from_policy(state)
+            action = self.policy.sample_action(state)
             new_state, reward, done, info = self.environment.step(action)
 
             # Store information from step
             states.append(state)
             rewards.append(reward)
-            values.append(self.critic.predict_value(state))
-            policy_probabilities.append(self.actor.get_policy(state))
 
             # Update state
             state = new_state
 
-            # Reset state if task is done
-            if done:
-                self.environment.reset()
+        # Reset environment initial state
+        self.environment.init = init_state
+        self.environment.reset()
 
-        return np.array(states), np.array(values), np.array(rewards), np.array(policy_probabilities)
+        return states, rewards
 
-    def train(self):
-        mean_rewards = []
-        for iters in range(self.max_iterations):
+    def calculate_advantage_estimates(self, states: List[np.array], rewards: List[float]) -> List[float]:
+        values = self.policy.get_value_estimates_as_array(states)
+        advantage_estimates = []
+        advantage = 0
+        for t in reversed(range(self.n_steps_per_trajectory)):
+            delta = rewards[t] + self.discount*values[t + 1] - values[t]
+            advantage = delta + self.discount*self.gae_param*advantage
+            advantage_estimates.insert(0, advantage)
+        return advantage_estimates
+
+    def calculate_discounted_rewards(self, states: List[np.array], rewards: List[float]) -> List[float]:
+        discounted_rewards = []
+        discounted_reward = 0
+        for t in reversed(range(self.n_steps_per_trajectory)):
+            discounted_reward = rewards[t] + self.discount*discounted_reward
+            discounted_rewards.insert(0, discounted_reward)
+        return discounted_rewards
+
+    def generate_batch(self) -> Tuple[List[np.ndarray], List[float], List[float]]:
+
+        states = []
+        rewards = []
+        discounted_rewards = []
+
+        for _ in range(self.n_trajectories_per_batch):
 
             # Generate trajectory under current policy
-            states, values, rewards, policy_probabilities = self.generate_trajectory()
+            new_states, new_rewards = self.generate_trajectory()
 
-            # Calculate returns and advantages
-            returns = self.calculate_returns(
-                values=values,
-                rewards=rewards
-            )
-            advantages = self.calculate_advantages(
-                values=values,
-                returns=returns
+            # Add advantages and policy probabilities to batch
+            states += new_states[:-1]
+            rewards += new_rewards
+            discounted_rewards += self.calculate_discounted_rewards(
+                states=new_states,
+                rewards=new_rewards
             )
 
-            # Perform gradient update on actor and critic
-            self.update_actor(
-                states=states[:-1],
-                policy_probabilities=policy_probabilities[:-1],
-                rewards=rewards[:-1],
-                values=values[:-1],
-                advantages=advantages
-            )
-            self.update_critic(
-                states=states[:-1],
-                returns=returns
-            )
-            mean_rewards.append(np.mean(rewards))
-            if iters % 20 == 0:
-                plt.plot(mean_rewards)
-                plt.show()
+        return states, rewards, discounted_rewards
 
+    def train(self, log: bool = True) -> None:
 
+        for i in range(self.n_iterations):
 
+            # Generate batch
+            states, rewards, discounted_rewards = self.generate_batch()
+
+            # Convert data to tensors
+            states = torch.tensor(states).float().to(DEVICE).detach()
+            discounted_rewards = torch.tensor(discounted_rewards).float().unsqueeze(1).to(DEVICE).detach()
+            old_policy_probabilities = self.policy.actor(states).float().to(DEVICE).detach()
+
+            # Normalize rewards
+            discounted_rewards = (discounted_rewards - torch.mean(discounted_rewards)) \
+                                  / (torch.std(discounted_rewards) + TOL)
+
+            for _ in range(self.n_epochs):
+
+                # Get policy network outputs
+                policy_probabilities, values = self.policy(states)
+
+                # Get advantage estimates
+                advantage_estimates = (discounted_rewards - values.detach())
+
+                # Compute loss
+                ratio = torch.exp(torch.log(policy_probabilities + TOL) - torch.log(old_policy_probabilities + TOL))
+                actor_loss = -torch.mean(
+                    torch.min(
+                        torch.clamp(ratio, 1 - self.clipping_param, 1 + self.clipping_param) * advantage_estimates,
+                        ratio * advantage_estimates
+                    )
+                )
+                critic_loss = torch.mean((discounted_rewards - values).pow(2))
+                entropy_loss = torch.mean(policy_probabilities * torch.log(policy_probabilities))
+                loss = (actor_loss + self.critic_coefficient*critic_loss + self.entropy_coefficient*entropy_loss)
+
+                # Perform gradient update
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+
+            if log:
+                print(f"Iteration: {i + 1}")
+                print(f"Mean reward: {np.mean(rewards)}")
+                print("-"*50)
 
 
 
