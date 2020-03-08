@@ -1,12 +1,14 @@
-from typing import Tuple, Union, Dict, List, Optional, Any
+from typing import Tuple, Union, Dict, List, Optional
 
 import numpy as np
 import logging
 import torch
 import torch.nn as nn
+from copy import deepcopy
 from gym.spaces import Box
 from torch.distributions import Categorical
 from utils.misc import concatenate_lists, timer
+
 
 from robot_environments.pusher import PusherEnv
 from robot_environments.reacher import ReacherEnv
@@ -20,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 TOL = 1e-10
+
 
 class ActorCritic(nn.Module):
 
@@ -93,19 +96,24 @@ class PPOLearner:
             n_steps_per_trajectory: int = 128,
             n_trajectories_per_batch: int = 8,
             n_epochs: int = 5,
-            n_iterations: int = 20,
-            learning_rate: float = 2e-4,
+            n_iterations: int = 50,
+            learning_rate: float = 2.5e-4,
             discount: float = 0.99,
             clipping_param: float = 0.1,
             critic_coefficient: float = 1.0,
-            entropy_coefficient: float = 2e-2,
+            entropy_coefficient: float = 0.1,
             entropy_decay: float = 0.999,
+            reversion_threshold: float = 0.2,
+            reversion_threshold_decay: float = 0.99,
+            min_reversion_threshold: float = 0.1,
             seed: int = 0
     ):
         # Set seed
+        self.seed = seed
         torch.manual_seed(seed)
         np.random.seed(seed)
 
+        # Set environment attribute
         self.environment = environment
 
         # Initialize actor-critic policy network
@@ -131,13 +139,18 @@ class PPOLearner:
         self.critic_coefficient = critic_coefficient
         self.entropy_coefficient = entropy_coefficient
         self.entropy_decay = entropy_decay
+        self.reversion_threshold = reversion_threshold
+        self.reversion_threshold_decay = reversion_threshold_decay
+        self.min_reversion_threshold = min_reversion_threshold
         if random_init_box is None:
             self.randomize_init_state = False
         else:
             self.randomize_init_state = True
 
-        # Initialize mean discounted rewards list
+        # Initialize attributes for performance tracking
         self.mean_rewards = []
+        self.best_mean_reward = -np.inf
+        self.best_policy = deepcopy(self.policy)
 
     def calculate_discounted_rewards(self, rewards: List[float]) -> List[float]:
         discounted_rewards = []
@@ -146,14 +159,6 @@ class PPOLearner:
             discounted_reward = rewards[t] + self.discount*discounted_reward
             discounted_rewards.insert(0, discounted_reward)
         return discounted_rewards
-
-    def process_trajectory(
-            self,
-            states: List[np.ndarray],
-            rewards: List[float]
-    ) -> Tuple[List[np.ndarray], List[float], List[float]]:
-        discounted_rewards = self.calculate_discounted_rewards(rewards=rewards)
-        return states[:-1], rewards, discounted_rewards
 
     def generate_trajectory(self) -> Tuple[List[np.ndarray], List[float], List[float]]:
 
@@ -188,8 +193,11 @@ class PPOLearner:
         self.environment.init = init_state
         self.environment.reset()
 
+        # Calculate discounted rewards
+        discounted_rewards = self.calculate_discounted_rewards(rewards=rewards)
+
         # Return states (excluding terminal state), rewards and discounted rewards
-        return self.process_trajectory(states=states, rewards=rewards)
+        return states[:-1], rewards, discounted_rewards
 
     @timer
     def generate_batch(self) -> Tuple[List[np.ndarray], List[float], List[float]]:
@@ -201,6 +209,90 @@ class PPOLearner:
         states, rewards, discounted_rewards = map(concatenate_lists, zip(*trajectories))
         return states, rewards, discounted_rewards
 
+    def _track_performance(self, rewards):
+        mean_reward = np.mean(rewards)
+        self.mean_rewards.append(mean_reward)
+        logger.info(f"Mean reward: {mean_reward}")
+        if mean_reward > self.best_mean_reward:
+            self.best_mean_reward = mean_reward
+            self.best_policy = deepcopy(self.policy)
+        elif (self.best_mean_reward - mean_reward) / self.best_mean_reward > self.reversion_threshold:
+            self.policy = self.best_policy
+            logger.info(f"Reverting policy!")
+
+    def _get_tensors(
+            self,
+            states: List[np.ndarray],
+            discounted_rewards: List[float],
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+
+        # Convert data to tensors
+        states = torch.tensor(states).float().to(device).detach()
+        discounted_rewards = torch.tensor(discounted_rewards).float().unsqueeze(1).to(device).detach()
+        old_policy_probabilities = self.policy.actor(states).float().to(device).detach()
+
+        # Normalize discounted rewards
+        discounted_rewards = (discounted_rewards - torch.mean(discounted_rewards)) / (torch.std(discounted_rewards) + TOL)
+
+        return states, discounted_rewards, old_policy_probabilities
+
+    def ppo_loss(
+            self,
+            values: torch.Tensor,
+            discounted_rewards: torch.Tensor,
+            policy_probabilities: torch.Tensor,
+            old_policy_probabilities: torch.Tensor,
+            advantage_estimates: torch.Tensor,
+    ) -> torch.Tensor:
+        ratio = torch.exp(torch.log(policy_probabilities + TOL) - torch.log(old_policy_probabilities + TOL))
+        actor_loss = -torch.mean(
+            torch.min(
+                torch.clamp(ratio, 1 - self.clipping_param, 1 + self.clipping_param) * advantage_estimates,
+                ratio * advantage_estimates
+            )
+        )
+        critic_loss = torch.mean((discounted_rewards - values).pow(2))
+        entropy_loss = torch.mean(policy_probabilities * torch.log(policy_probabilities + TOL))
+        return actor_loss + self.critic_coefficient * critic_loss + self.entropy_coefficient * entropy_loss
+
+    @timer
+    def update_policy_network(
+            self,
+            states: torch.Tensor,
+            discounted_rewards: torch.Tensor,
+            old_policy_probabilities: torch.Tensor
+    ) -> None:
+
+        for _ in range(self.n_epochs):
+
+            # Get policy network outputs
+            policy_probabilities, values = self.policy(states)
+
+            # Get advantage estimates
+            advantage_estimates = (discounted_rewards - values.detach())
+
+            # Calculate loss
+            loss = self.ppo_loss(
+                values=values,
+                discounted_rewards=discounted_rewards,
+                policy_probabilities=policy_probabilities,
+                old_policy_probabilities=old_policy_probabilities,
+                advantage_estimates=advantage_estimates
+            )
+
+            # Perform gradient update
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+    def update_hyperparameters(self) -> None:
+        # Decay entropy coefficient
+        self.entropy_coefficient = self.entropy_decay * self.entropy_coefficient
+
+        # Decay reversion threshold
+        self.reversion_threshold = max(self.reversion_threshold_decay * self.reversion_threshold_decay,
+                                       self.min_reversion_threshold)
+
     def train(self) -> None:
 
         for i in range(self.n_iterations):
@@ -210,48 +302,27 @@ class PPOLearner:
             # Generate batch
             states, rewards, discounted_rewards = self.generate_batch()
 
-            # Convert data to tensors
-            states = torch.tensor(states).float().to(device).detach()
-            discounted_rewards = torch.tensor(discounted_rewards).float().unsqueeze(1).to(device).detach()
-            old_policy_probabilities = self.policy.actor(states).float().to(device).detach()
+            # Track performance
+            self._track_performance(rewards=rewards)
 
-            # Store mean reward
-            self.mean_rewards.append(np.mean(rewards))
+            # Convert data to PyTorch tensors
+            states, discounted_rewards, old_policy_probabilities = self._get_tensors(
+                states=states,
+                discounted_rewards=discounted_rewards
+            )
 
-            # Normalize discounted rewards
-            discounted_rewards = (discounted_rewards - torch.mean(discounted_rewards)) \
-                                  / (torch.std(discounted_rewards) + TOL)
+            # Perform gradient updates
+            self.update_policy_network(
+               states=states,
+               discounted_rewards=discounted_rewards,
+               old_policy_probabilities=old_policy_probabilities
+            )
 
-            # Decay entropy coefficient
-            self.entropy_coefficient = self.entropy_decay * self.entropy_coefficient
+            # Update parameters
+            self.update_hyperparameters()
 
-            for _ in range(self.n_epochs):
+            logger.info("-" * 50)
 
-                # Get policy network outputs
-                policy_probabilities, values = self.policy(states)
-
-                # Get advantage estimates
-                advantage_estimates = (discounted_rewards - values.detach())
-
-                # Compute loss
-                ratio = torch.exp(torch.log(policy_probabilities + TOL) - torch.log(old_policy_probabilities + TOL))
-                actor_loss = -torch.mean(
-                    torch.min(
-                        torch.clamp(ratio, 1 - self.clipping_param, 1 + self.clipping_param) * advantage_estimates,
-                        ratio * advantage_estimates
-                    )
-                )
-                critic_loss = torch.mean((discounted_rewards - values).pow(2))
-                entropy_loss = torch.mean(policy_probabilities * torch.log(policy_probabilities + TOL))
-                loss = (actor_loss + self.critic_coefficient*critic_loss + self.entropy_coefficient*entropy_loss)
-
-                # Perform gradient update
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-
-            logger.info(f"Mean reward: {self.mean_rewards[i]}")
-            logger.info("-"*50)
 
 
 

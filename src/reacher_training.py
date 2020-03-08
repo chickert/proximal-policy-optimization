@@ -37,5 +37,5 @@ for seed in good_seeds:
     learner.train()
 
     # Save outputs
-    save_training_rewards(learner=learner, path=f"reacher_{seed}_training_rewards")
+    save_training_rewards(learner=learner, path=f"reacher_training_rewards")
     #save_videos(learner=learner, path=f"reacher_{seed}_video")
