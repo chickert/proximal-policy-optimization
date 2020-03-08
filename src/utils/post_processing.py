@@ -6,7 +6,13 @@ from cv2 import VideoWriter, VideoWriter_fourcc
 
 def save_training_rewards(learner: PPOLearner, path: str) -> None:
     # Save training rewards as csv
-    pd.DataFrame(learner.mean_rewards).to_csv(f"{path}.csv")
+    try:
+        df = pd.read_csv(f"{path}.csv")
+        df[learner.seed] = learner.mean_rewards
+    except FileNotFoundError:
+        df = pd.DataFrame(learner.mean_rewards, columns=[learner.seed])
+        df.index.name = "iteration"
+    df.to_csv(f"{path}.csv")
 
 
 def save_videos(learner: PPOLearner, path: str, n_videos: int = 1) -> None:
