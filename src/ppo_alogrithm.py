@@ -1,18 +1,25 @@
-from typing import Tuple, Union, Dict, List
+from typing import Tuple, Union, Dict, List, Optional, Any
 
 import numpy as np
+import logging
 import torch
 import torch.nn as nn
 from gym.spaces import Box
 from torch.distributions import Categorical
+from utils.misc import concatenate_lists, timer
 
 from robot_environments.pusher import PusherEnv
 from robot_environments.reacher import ReacherEnv
 from robot_environments.reacher_wall import ReacherWallEnv
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-TOL = 1e-10
+# Set up device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# Set up logging
+logger = logging.getLogger(__name__)
+
+# Constants
+TOL = 1e-10
 
 class ActorCritic(nn.Module):
 
@@ -82,19 +89,23 @@ class PPOLearner:
             action_map: Dict[int, np.array],
             critic_hidden_layer_units: List[int],
             actor_hidden_layer_units: List[int],
-            random_init_box: Box,
+            random_init_box: Optional[Box] = None,
             n_steps_per_trajectory: int = 128,
-            n_trajectories_per_batch: int = 32,
-            n_epochs: int = 4,
-            n_iterations: int = 100,
-            learning_rate: float = 2e-3,
+            n_trajectories_per_batch: int = 8,
+            n_epochs: int = 5,
+            n_iterations: int = 20,
+            learning_rate: float = 2e-4,
             discount: float = 0.99,
-            clipping_param: float = 0.2,
-            critic_coefficient: float = 0.5,
-            entropy_coefficient: float = 1e-4,
-            randomize_init_state: bool = True
+            clipping_param: float = 0.1,
+            critic_coefficient: float = 1.0,
+            entropy_coefficient: float = 2e-2,
+            entropy_decay: float = 0.999,
+            seed: int = 0
     ):
-        # Set environment attribute
+        # Set seed
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+
         self.environment = environment
 
         # Initialize actor-critic policy network
@@ -119,9 +130,32 @@ class PPOLearner:
         self.clipping_param = clipping_param
         self.critic_coefficient = critic_coefficient
         self.entropy_coefficient = entropy_coefficient
-        self.randomize_init_state = randomize_init_state
+        self.entropy_decay = entropy_decay
+        if random_init_box is None:
+            self.randomize_init_state = False
+        else:
+            self.randomize_init_state = True
 
-    def generate_trajectory(self) -> Tuple[List[np.ndarray], List[float]]:
+        # Initialize mean discounted rewards list
+        self.mean_rewards = []
+
+    def calculate_discounted_rewards(self, rewards: List[float]) -> List[float]:
+        discounted_rewards = []
+        discounted_reward = 0
+        for t in reversed(range(self.n_steps_per_trajectory)):
+            discounted_reward = rewards[t] + self.discount*discounted_reward
+            discounted_rewards.insert(0, discounted_reward)
+        return discounted_rewards
+
+    def process_trajectory(
+            self,
+            states: List[np.ndarray],
+            rewards: List[float]
+    ) -> Tuple[List[np.ndarray], List[float], List[float]]:
+        discounted_rewards = self.calculate_discounted_rewards(rewards=rewards)
+        return states[:-1], rewards, discounted_rewards
+
+    def generate_trajectory(self) -> Tuple[List[np.ndarray], List[float], List[float]]:
 
         # Initialize trajectory
         states = []
@@ -131,10 +165,10 @@ class PPOLearner:
         init_state = self.environment.init
         if self.randomize_init_state:
             state = self.random_init_box.sample()
+            self.environment.init = state
+            self.environment.reset()
         else:
             state = init_state
-        self.environment.init = state
-        self.environment.reset()
 
         # Generate a sample trajectory under the current policy
         for _ in range(self.n_steps_per_trajectory + 1):
@@ -154,52 +188,42 @@ class PPOLearner:
         self.environment.init = init_state
         self.environment.reset()
 
-        return states, rewards
+        # Return states (excluding terminal state), rewards and discounted rewards
+        return self.process_trajectory(states=states, rewards=rewards)
 
-    def calculate_discounted_rewards(self, states: List[np.array], rewards: List[float]) -> List[float]:
-        discounted_rewards = []
-        discounted_reward = 0
-        for t in reversed(range(self.n_steps_per_trajectory)):
-            discounted_reward = rewards[t] + self.discount*discounted_reward
-            discounted_rewards.insert(0, discounted_reward)
-        return discounted_rewards
-
+    @timer
     def generate_batch(self) -> Tuple[List[np.ndarray], List[float], List[float]]:
 
-        states = []
-        rewards = []
-        discounted_rewards = []
+        # Generate trajectories
+        trajectories = [self.generate_trajectory() for _ in range(self.n_trajectories_per_batch)]
 
-        for _ in range(self.n_trajectories_per_batch):
-
-            # Generate trajectory under current policy
-            new_states, new_rewards = self.generate_trajectory()
-
-            # Add advantages and policy probabilities to batch
-            states += new_states[:-1]
-            rewards += new_rewards
-            discounted_rewards += self.calculate_discounted_rewards(
-                states=new_states,
-                rewards=new_rewards
-            )
-
+        # Unzip and return trajectories
+        states, rewards, discounted_rewards = map(concatenate_lists, zip(*trajectories))
         return states, rewards, discounted_rewards
 
-    def train(self, log: bool = True) -> None:
+    def train(self) -> None:
 
         for i in range(self.n_iterations):
+
+            logger.info(f"Iteration: {i + 1}")
 
             # Generate batch
             states, rewards, discounted_rewards = self.generate_batch()
 
             # Convert data to tensors
-            states = torch.tensor(states).float().to(DEVICE).detach()
-            discounted_rewards = torch.tensor(discounted_rewards).float().unsqueeze(1).to(DEVICE).detach()
-            old_policy_probabilities = self.policy.actor(states).float().to(DEVICE).detach()
+            states = torch.tensor(states).float().to(device).detach()
+            discounted_rewards = torch.tensor(discounted_rewards).float().unsqueeze(1).to(device).detach()
+            old_policy_probabilities = self.policy.actor(states).float().to(device).detach()
 
-            # Normalize rewards
+            # Store mean reward
+            self.mean_rewards.append(np.mean(rewards))
+
+            # Normalize discounted rewards
             discounted_rewards = (discounted_rewards - torch.mean(discounted_rewards)) \
                                   / (torch.std(discounted_rewards) + TOL)
+
+            # Decay entropy coefficient
+            self.entropy_coefficient = self.entropy_decay * self.entropy_coefficient
 
             for _ in range(self.n_epochs):
 
@@ -226,12 +250,8 @@ class PPOLearner:
                 loss.backward()
                 self.optimizer.step()
 
-            if log:
-                print(f"Iteration: {i + 1}")
-                print(f"Mean reward: {np.mean(rewards)}")
-                print("-"*50)
-
-
+            logger.info(f"Mean reward: {self.mean_rewards[i]}")
+            logger.info("-"*50)
 
 
 

@@ -16,7 +16,7 @@ import pybullet as p
 
 
 class ReacherWallEnv:
-	def __init__(self, action_repeat=10, render=False):
+	def __init__(self, action_repeat=5, render=False):
 		self._action_repeat = action_repeat		
 		self.robot = Robot('ur5e_stick', pb=True, pb_cfg={'gui': render, 'realtime':False})
 		self.ee_ori = [-np.sqrt(2) / 2, np.sqrt(2) / 2, 0, 0]

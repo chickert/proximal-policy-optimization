@@ -72,9 +72,9 @@ class ReacherEnv:
         reward = self.compute_reward_reach(state)
         return state, reward, done, info
 
-    def compute_reward_reach(self, state):
+    def compute_reward_reach(self, state, sparsity_param=3.0):
         distance_from_goal = np.linalg.norm(self.goal - state, 2)
-        return np.exp(-2*distance_from_goal**2)
+        return np.exp(-sparsity_param*distance_from_goal**2)
 
     def _get_obs(self):
         gripper_pos = self.robot.arm.get_ee_pose()[0]
