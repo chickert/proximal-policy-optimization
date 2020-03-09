@@ -120,6 +120,7 @@ class PPOLearner:
             # Sample from policy and receive feedback from environment
             action = self.policy.sample_action(state)
             new_state, reward, done, info = self.environment.step(action)
+            #print(action)
 
             # Store information from step
             states.append(state)
@@ -259,6 +260,7 @@ class PPOLearner:
                 discounted_rewards=discounted_rewards,
                 log_probabilities=log_probabilities,
                 old_log_probabilities=old_log_probabilities,
+                entropy=entropy,
                 advantage_estimates=advantage_estimates
             )
 
@@ -300,7 +302,7 @@ class PPOLearner:
                 states=states,
                 actions=actions,
                 discounted_rewards=discounted_rewards,
-                old_policy_probabilities=old_log_probabilities
+                old_log_probabilities=old_log_probabilities
             )
 
             # Update hyper-parameters

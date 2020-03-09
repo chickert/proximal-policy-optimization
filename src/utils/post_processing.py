@@ -37,7 +37,7 @@ def save_video(learner: PPOLearner, path: str, use_argmax: bool = False) -> None
         _, actions, _, _ = learner.generate_argmax_trajectory()
     else:
         _, actions, _, _ = learner.generate_sample_trajectory()
-    logger.info(f"Action counts: {dict(Counter(map(tuple, actions)))}")
+    #logger.info(f"Action counts: {dict(Counter(map(tuple, actions)))}")
     learner.environment.reset()
     for action in actions:
         learner.environment.step(action)

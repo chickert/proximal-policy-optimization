@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.distributions import Categorical, Normal
 
 # Constants
-DISCRETE_STEP_SIZE = 2.0
+STEP_SIZE = 20.0
 DISCRETE_ACTION_SPACE = [
     [0, 0],
     [1, 0],
@@ -14,8 +14,8 @@ DISCRETE_ACTION_SPACE = [
     [0, -1],
     [0, 1],
 ]
-DISCRETE_ACTION_MAP = {i: DISCRETE_STEP_SIZE * np.array(action) for i, action in enumerate(DISCRETE_ACTION_SPACE)}
-CONTINUOUS_EPS = 0.02
+DISCRETE_ACTION_MAP = {i: STEP_SIZE * np.array(action) for i, action in enumerate(DISCRETE_ACTION_SPACE)}
+CONTINUOUS_EPS = 0.05
 
 
 def discrete_action_map(action: torch.Tensor) -> np.ndarray:
@@ -23,7 +23,7 @@ def discrete_action_map(action: torch.Tensor) -> np.ndarray:
 
 
 def continuous_action_map(action: torch.Tensor) -> np.ndarray:
-    return action.numpy()
+    return STEP_SIZE * action.detach().numpy()
 
 
 class ActorCritic(nn.Module):

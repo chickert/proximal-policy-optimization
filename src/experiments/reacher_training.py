@@ -24,7 +24,7 @@ action_space = [
 action_map = {i: step_size * np.array(action) for i, action in enumerate(action_space)}
 
 # Run training over multiple random seeds
-for seed in range(1, 2):
+for seed in [8]:
 
     # Initialize learner
     learner = PPOLearner(
@@ -33,7 +33,10 @@ for seed in range(1, 2):
         action_space_dimension=2,
         critic_hidden_layer_units=[32, 16],
         actor_hidden_layer_units=[64, 32],
-        n_iterations=75,
+        n_iterations=50,
+        n_trajectories_per_batch=10,
+        n_steps_per_trajectory=200,
+        discrete_actor=True,
         seed=seed
     )
 
@@ -41,7 +44,7 @@ for seed in range(1, 2):
     learner.train()
 
     # Save outputs
-    save_training_rewards(learner=learner, path="reacher_training_rewards")
-    save_video(learner=learner, path=f"reacher_{seed}_argmax_video", use_argmax=True)
-    for i in range(5):
+    #save_training_rewards(learner=learner, path="reacher_training_rewards")
+    #save_video(learner=learner, path=f"reacher_{seed}_argmax_video", use_argmax=True)
+    for i in range(2):
         save_video(learner=learner, path=f"reacher_{seed}_random_video_{i}", use_argmax=False)
