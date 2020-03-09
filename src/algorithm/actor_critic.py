@@ -1,4 +1,4 @@
-from typing import Tuple, List
+from typing import Tuple, List, Callable
 
 import numpy as np
 import torch
@@ -15,15 +15,33 @@ DISCRETE_ACTION_SPACE = [
     [0, 1],
 ]
 DISCRETE_ACTION_MAP = {i: STEP_SIZE * np.array(action) for i, action in enumerate(DISCRETE_ACTION_SPACE)}
+INVERSE_DISCRETE_MAP = {tuple(action): i for i, action in DISCRETE_ACTION_MAP.items()}
 CONTINUOUS_EPS = 0.05
 
 
-def discrete_action_map(action: torch.Tensor) -> np.ndarray:
-    return DISCRETE_ACTION_MAP[action.item()]
+def make_discrete_action_map(action_step_size: float) -> Callable[[torch.Tensor], np.ndarray]:
+
+    map_dict = {i: action_step_size * np.array(action) for i, action in enumerate(DISCRETE_ACTION_SPACE)}
+
+    def discrete_action_map(action: torch.Tensor) -> np.ndarray:
+        return map_dict[action.item()]
+    return discrete_action_map
 
 
-def continuous_action_map(action: torch.Tensor) -> np.ndarray:
-    return STEP_SIZE * action.detach().numpy()
+def make_discrete_inverse_action_map(action_step_size: float) -> Callable[[np.ndarray], int]:
+
+    inverse_map_dict = {tuple(action_step_size * np.array(action)): i for i, action in enumerate(DISCRETE_ACTION_SPACE)}
+
+    def discrete_inverse_action_map(action: np.ndarray) -> int:
+        return inverse_map_dict[tuple(action)]
+    return discrete_inverse_action_map
+
+
+def make_continuous_action_map(action_step_size: float) -> Callable[[torch.Tensor], np.ndarray]:
+
+    def continuous_action_map(action: torch.Tensor) -> np.ndarray:
+        return action_step_size * action.detach().numpy()
+    return continuous_action_map
 
 
 class ActorCritic(nn.Module):
@@ -35,6 +53,8 @@ class ActorCritic(nn.Module):
             actor_hidden_layer_units: List[int],
             critic_hidden_layer_units: List[int],
             discrete_actor: bool,
+            action_step_size: float = 1.0,
+            actor_std: float = 0.05,
             non_linearity: nn.Module = nn.ReLU,
     ):
         super(ActorCritic, self).__init__()
@@ -42,9 +62,11 @@ class ActorCritic(nn.Module):
         # Define policy as discrete or continuous
         self.discrete_actor = discrete_actor
         if self.discrete_actor:
-            self.action_map = discrete_action_map
+            self.action_map = make_discrete_action_map(action_step_size=action_step_size)
+            self.inverse_action_map = make_discrete_inverse_action_map(action_step_size=action_step_size)
         else:
-            self.action_map = continuous_action_map
+            self.action_map = make_continuous_action_map(action_step_size=action_step_size)
+            self.actor_std = actor_std
 
         # Make actor network
         actor_layers = [
@@ -84,7 +106,7 @@ class ActorCritic(nn.Module):
         if self.discrete_actor:
             return Categorical(self.actor(states))
         else:
-            return Normal(loc=self.actor(states), scale=CONTINUOUS_EPS)
+            return Normal(loc=self.actor(states), scale=self.actor_std)
 
     def get_distribution_argmax(self, states: torch.Tensor):
         if self.discrete_actor:

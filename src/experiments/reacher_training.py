@@ -1,30 +1,16 @@
 import logging
 
-import numpy as np
-import torch
-
 from algorithm.ppo import PPOLearner
 from robot_environments.reacher import ReacherEnv
-from utils.post_processing import save_training_rewards, save_video
+from utils.post_processing import save_video
 
 logger = logging.basicConfig(level=logging.INFO)
 
 # Set environment
 environment = ReacherEnv(render=False)
 
-# Define action map function
-step_size = 20.0
-action_space = [
-    [0, 0],
-    [1, 0],
-    [-1, 0],
-    [0, -1],
-    [0, 1],
-]
-action_map = {i: step_size * np.array(action) for i, action in enumerate(action_space)}
-
 # Run training over multiple random seeds
-for seed in [8]:
+for seed in [2]:
 
     # Initialize learner
     learner = PPOLearner(
