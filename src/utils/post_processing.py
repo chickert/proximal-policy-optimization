@@ -7,6 +7,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def save_training_rewards(learner: PPOLearner, path: str) -> None:
     # Save training rewards as csv
     try:
@@ -18,7 +19,7 @@ def save_training_rewards(learner: PPOLearner, path: str) -> None:
     df.to_csv(f"{path}.csv")
 
 
-def save_video(learner: PPOLearner, path: str, use_argmax: bool = True) -> None:
+def save_video(learner: PPOLearner, path: str, use_argmax: bool = False) -> None:
     # Save videos of agent as mp4
     learner.environment.robot.cam.setup_camera(
         focus_pt=learner.environment.robot.arm.robot_base_pos,
@@ -36,7 +37,7 @@ def save_video(learner: PPOLearner, path: str, use_argmax: bool = True) -> None:
         _, actions, _, _ = learner.generate_argmax_trajectory()
     else:
         _, actions, _, _ = learner.generate_sample_trajectory()
-    logger.info(f"Action counts: {Counter(map(tuple, actions))}")
+    logger.info(f"Action counts: {dict(Counter(map(tuple, actions)))}")
     learner.environment.reset()
     for action in actions:
         learner.environment.step(action)

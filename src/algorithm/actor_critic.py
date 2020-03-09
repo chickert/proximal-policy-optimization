@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical
+from typing import Callable
 
 
 class ActorCritic(nn.Module):
@@ -11,7 +12,7 @@ class ActorCritic(nn.Module):
     def __init__(
             self,
             state_space_dimension: int,
-            action_map: Dict[int, np.array],
+            action_map: Dict[int, np.ndarray],
             actor_hidden_layer_units: List[int],
             critic_hidden_layer_units: List[int],
             non_linearity: nn.Module = nn.ReLU

@@ -27,23 +27,25 @@ class PPOLearner:
     def __init__(
             self,
             environment: Union[ReacherEnv, ReacherWallEnv, PusherEnv],
+            state_space_dimension: int,
             action_map: Dict[int, np.array],
             critic_hidden_layer_units: List[int],
             actor_hidden_layer_units: List[int],
             random_init_box: Optional[Box] = None,
-            n_steps_per_trajectory: int = 300,
+            n_steps_per_trajectory: int = 200,
             n_trajectories_per_batch: int = 10,
-            n_epochs: int = 5,
+            n_epochs: int = 4,
             n_iterations: int = 50,
             learning_rate: float = 3e-4,
             discount: float = 0.99,
-            clipping_param: float = 0.1,
+            clipping_param: float = 0.2,
             critic_coefficient: float = 1.0,
             init_entropy_coefficient: float = 0.01,
             entropy_decay: float = 0.999,
             init_reversion_threshold: float = 0.4,
             reversion_threshold_decay: float = 0.95,
-            min_reversion_threshold: float = 0.2,
+            min_reversion_threshold: float = 0.1,
+            allow_policy_reversions: bool = False,
             seed: int = 0
     ):
         # Set seed
@@ -56,7 +58,7 @@ class PPOLearner:
 
         # Initialize actor-critic policy network
         self.policy = ActorCritic(
-            state_space_dimension=environment.init.shape[0],
+            state_space_dimension=state_space_dimension,
             action_map=action_map,
             actor_hidden_layer_units=actor_hidden_layer_units,
             critic_hidden_layer_units=critic_hidden_layer_units,
@@ -79,6 +81,7 @@ class PPOLearner:
         self.reversion_threshold = init_reversion_threshold
         self.reversion_threshold_decay = reversion_threshold_decay
         self.min_reversion_threshold = min_reversion_threshold
+        self.allow_policy_reversions = allow_policy_reversions
         if random_init_box is None:
             self.randomize_init_state = False
         else:
@@ -104,13 +107,11 @@ class PPOLearner:
         rewards = []
 
         # Set initial state
-        init_state = self.environment.init
         if self.randomize_init_state:
-            state = self.random_init_box.sample()
-            self.environment.init = state
+            nominal_init = self.environment.init
+            self.environment.init = self.random_init_box.sample()
             self.environment.reset()
-        else:
-            state = init_state
+        state = self.environment._get_obs()
 
         # Generate a sample trajectory under the current policy
         for _ in range(self.n_steps_per_trajectory + 1):
@@ -127,7 +128,8 @@ class PPOLearner:
             state = new_state
 
         # Reset environment to initial state
-        self.environment.init = init_state
+        if self.randomize_init_state:
+            self.environment.init = nominal_init
         self.environment.reset()
 
         # Calculate discounted rewards
@@ -143,7 +145,7 @@ class PPOLearner:
         rewards = []
 
         # Set initial state
-        state = self.environment.init
+        state = self.environment._get_obs()
 
         # Generate trajectory corresponding to argmax of probabilities under current policy
         for _ in range(self.n_steps_per_trajectory + 1):
@@ -185,7 +187,8 @@ class PPOLearner:
         if mean_reward > self.best_mean_reward:
             self.best_mean_reward = mean_reward
             self.best_policy = deepcopy(self.policy)
-        elif (self.best_mean_reward - mean_reward) / self.best_mean_reward > self.reversion_threshold:
+        elif ((self.best_mean_reward - mean_reward) / self.best_mean_reward > self.reversion_threshold) \
+                & self.allow_policy_reversions:
             self.policy = self.best_policy
             logger.info(f"Reverting policy!")
 

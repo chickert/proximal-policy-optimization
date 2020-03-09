@@ -4,27 +4,28 @@ import numpy as np
 
 from algorithm.ppo import PPOLearner
 from robot_environments.reacher_wall import ReacherWallEnv
-from utils.post_processing import save_training_rewards
+from utils.post_processing import save_training_rewards, save_video
 
 logger = logging.basicConfig(level=logging.INFO)
 
 # Set environment
-environment = ReacherWallEnv(render=False)
+environment = ReacherWallEnv(render=True, use_naive_reward=False)
 
 # Define action map
-step_size = 15.0
+step_size = 2.0
 action_space = [
     [0, 0],
     [1, 0],
     [-1, 0],
+    [0, -1],
     [0, 1],
-    [0, -1]
 ]
-action_map = {i: step_size * np.array(action) for i, action in enumerate(action_space)}
+def action_map(policy_probabilities):
+    action_map_dict = {i: step_size * np.array(action) for i, action in enumerate(action_space)}
 
-#
-good_seeds = [1] #[1, 8, 10, 12]
-for seed in good_seeds:
+# Run training over multiple random seeds
+for seed in [9000]:
+
     # Initialize learner
     learner = PPOLearner(
         environment=environment,
@@ -32,19 +33,18 @@ for seed in good_seeds:
         action_map=action_map,
         critic_hidden_layer_units=[32, 16],
         actor_hidden_layer_units=[64, 32],
-        n_iterations=50,
-        init_reversion_threshold=1.0,
-        min_reversion_threshold=0.5,
+        n_iterations=20,
+        n_trajectories_per_batch=20,
+        learning_rate=3e-4,
+        n_epochs=3,
         seed=seed
     )
 
     # Train learner
     learner.train()
 
-    # L
-    learner.environment = ReacherWallEnv(render=True)
-    _ = learner.generate_argmax_trajectory()
-
     # Save outputs
-    save_training_rewards(learner=learner, path=f"reacher_training_rewards")
-    save_videos(learner=learner, path=f"reacher_{seed}_video")
+    #save_training_rewards(learner=learner, path="reacher_training_rewards")
+    #save_video(learner=learner, path=f"reacher_wall_{seed}_argmax_video", use_argmax=True)
+    for i in range(2):
+        save_video(learner=learner, path=f"reacher_wall_{seed}_random_video_{i}", use_argmax=False)

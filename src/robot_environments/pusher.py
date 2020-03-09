@@ -15,7 +15,7 @@ import pybullet as p
 
 
 class PusherEnv:
-	def __init__(self, action_repeat=10, render=False):
+	def __init__(self, action_repeat=5, render=False):
 		self._action_repeat = action_repeat		
 		self.robot = Robot('ur5e_stick', pb=True, pb_cfg={'gui': render, 'realtime':False})
 		self.ee_ori = [-np.sqrt(2) / 2, np.sqrt(2) / 2, 0, 0]
@@ -57,7 +57,6 @@ class PusherEnv:
 											state_high,
 											dtype=np.float32)
 
-
 	def reset(self):		
 		self.robot.arm.go_home(ignore_physics=True)
 		jnt_pos = self.robot.arm.compute_ik(self.init)
@@ -79,9 +78,15 @@ class PusherEnv:
 		reward = self.compute_reward_push(state)
 		return state, reward, done, info
 
-	def compute_reward_push(self, state):
-		"""Fill in"""
-		raise NotImplementedError
+	def compute_reward_push(self, state, sparsity_param=2.5, weight=0.5):
+		gripper_state = np.array(state[:3])
+		obj_state = np.array(state[3:])
+		distance_from_obj_to_gripper = np.linalg.norm(obj_state - gripper_state, 2)
+		distance_from_obj_to_goal = np.linalg.norm(obj_state - self.goal, 2)
+		weighted_distance = weight*distance_from_obj_to_gripper + (1 - weight)*distance_from_obj_to_goal
+		object_off_table = float(obj_state[2] < 0.9)
+		return 2*np.exp(-sparsity_param * weighted_distance ** 2)-1 - object_off_table
+
 
 	def _get_obs(self):
 		gripper_pos = self.robot.arm.get_ee_pose()[0]
@@ -122,4 +127,3 @@ class PusherEnv:
 
 	def close(self):
 		return
-		
