@@ -1,10 +1,29 @@
-from typing import Tuple, Dict, List
+from typing import Tuple, List
 
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.distributions import Categorical
-from typing import Callable
+from torch.distributions import Categorical, Normal
+
+# Constants
+DISCRETE_STEP_SIZE = 2.0
+DISCRETE_ACTION_SPACE = [
+    [0, 0],
+    [1, 0],
+    [-1, 0],
+    [0, -1],
+    [0, 1],
+]
+DISCRETE_ACTION_MAP = {i: DISCRETE_STEP_SIZE * np.array(action) for i, action in enumerate(DISCRETE_ACTION_SPACE)}
+CONTINUOUS_EPS = 0.02
+
+
+def discrete_action_map(action: torch.Tensor) -> np.ndarray:
+    return DISCRETE_ACTION_MAP[action.item()]
+
+
+def continuous_action_map(action: torch.Tensor) -> np.ndarray:
+    return action.numpy()
 
 
 class ActorCritic(nn.Module):
@@ -12,15 +31,22 @@ class ActorCritic(nn.Module):
     def __init__(
             self,
             state_space_dimension: int,
-            action_map: Dict[int, np.ndarray],
+            action_space_dimension: int,
             actor_hidden_layer_units: List[int],
             critic_hidden_layer_units: List[int],
-            non_linearity: nn.Module = nn.ReLU
+            discrete_actor: bool,
+            non_linearity: nn.Module = nn.ReLU,
     ):
         super(ActorCritic, self).__init__()
 
+        # Define policy as discrete or continuous
+        self.discrete_actor = discrete_actor
+        if self.discrete_actor:
+            self.action_map = discrete_action_map
+        else:
+            self.action_map = continuous_action_map
+
         # Make actor network
-        action_space_dimension = len(action_map)
         actor_layers = [
             nn.Linear(state_space_dimension, actor_hidden_layer_units[0]),
             non_linearity()
@@ -32,8 +58,11 @@ class ActorCritic(nn.Module):
             ]
         actor_layers += [
             nn.Linear(actor_hidden_layer_units[-1], action_space_dimension),
-            nn.Softmax(dim=-1)
         ]
+        if self.discrete_actor:
+            actor_layers += [nn.Softmax(dim=-1)]
+        else:
+            actor_layers += [nn.Tanh()]
         self.actor = nn.Sequential(*actor_layers)
 
         # Make critic network
@@ -51,20 +80,31 @@ class ActorCritic(nn.Module):
         ]
         self.critic = nn.Sequential(*critic_layers)
 
-        # Initialize other attributes
-        self.action_map = action_map
+    def get_distribution(self, states: torch.Tensor):
+        if self.discrete_actor:
+            return Categorical(self.actor(states))
+        else:
+            return Normal(loc=self.actor(states), scale=CONTINUOUS_EPS)
 
-    def forward(self, states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        policy_probabilities = self.actor(states)
+    def get_distribution_argmax(self, states: torch.Tensor):
+        if self.discrete_actor:
+            return self.actor(states).argmax()
+        else:
+            return self.actor(states)
+
+    def forward(self, states: torch.Tensor, actions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        dist = self.get_distribution(states)
+        log_probabilities = dist.log_prob(actions)
+        entropy = dist.entropy()
         values = self.critic(states)
-        return policy_probabilities, values
+        return log_probabilities, values, entropy
 
     def sample_action(self, state: np.ndarray) -> np.ndarray:
         state = torch.tensor(state).float()
-        action = Categorical(self.actor(state)).sample().item()
-        return self.action_map[action]
+        action = self.get_distribution(state).sample()
+        return self.action_map(action)
 
     def get_argmax_action(self, state: np.ndarray) -> np.ndarray:
         state = torch.tensor(state).float()
-        action = self.actor(state).argmax().item()
-        return self.action_map[action]
+        action = self.get_distribution_argmax(state)
+        return self.action_map(action)

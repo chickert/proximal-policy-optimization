@@ -45,7 +45,7 @@ class ReacherWallEnv:
 		self.wall_id = self.robot.pb_client.load_geom('box', size=[self.wall_length, 0.01, 0.2], mass=0,
 													 base_pos=self.wall_center.tolist(),
 													 rgba=[1, 0, 0, 0.4])
-		self.intermediate_goal = self.wall_end - np.array([0.2, 0.05, 0])
+		self.intermediate_goal = self.wall_start + np.array([0.2, 0.05, 0])
 		self.marker_id = self.robot.pb_client.load_geom('box', size=0.05, mass=1,
 													 base_pos=self.goal.tolist(),
 													 rgba=[0, 1, 0, 0.4])
@@ -86,31 +86,19 @@ class ReacherWallEnv:
 		reward = self.compute_reward_reach_wall(state)
 		return state, reward, done, info
 
-	def compute_reward_reach_wall(self, state, sparsity_param=2.0):
+	def compute_reward_reach_wall(self, state, sparsity_param=1.0):
 		distance_to_goal = np.linalg.norm(self.goal - state, 2)
 		if self.use_naive_reward:
 			return np.exp(-sparsity_param * distance_to_goal ** 2)
 		else:
-			distance_to_intermediate_goal = np.linalg.norm(state - self.intermediate_goal, 2)
-			return np.exp(-sparsity_param * distance_to_goal ** 2) + np.exp(-sparsity_param * distance_to_intermediate_goal ** 2)
-			# # Check if robot is ~beyond the wall~
-			# if (self.intermediate_goal[1] - self.goal[1] > 0) & (self.intermediate_goal[1] - state[1] > 0) \
-			# 		or (self.intermediate_goal[1] - self.goal[1] < 0) & (self.intermediate_goal[1] - state[1] < 0):
-			# 	distance_to_goal = np.linalg.norm(self.goal - state, 2)
-			# 	offset = 1 - np.exp(-sparsity_param * np.linalg.norm(self.intermediate_goal - self.goal, 2) ** 2)
-			# 	return np.exp(-sparsity_param * distance_to_goal ** 2) + offset
-			# else:
-			# 	distance_to_intermediate_goal = np.linalg.norm(state - self.intermediate_goal, 2)
-			# 	distance_to_wall_start = np.linalg.norm(state - self.wall_start, 2)
-			# 	return np.exp(-sparsity_param * distance_to_intermediate_goal ** 2)
-			# 	distance_from_goal = np.linalg.norm(self.goal - state, 2)
-			# 	distance_from_wall = np.linalg.norm(self.wall_center - state, 2)
-			# 	if (self.wall_center[1] - self.goal[1] > 0) & (self.wall_center[1] - state[1] > 0) \
-			# 			or (self.wall_center[1] - self.goal[1] < 0) & (self.wall_center[1] - state[1] < 0):
-			# 		return 2 * (np.exp(-sparsity_param * distance_from_goal ** 2))
-			# 	else:
-			# 		return 2 * (np.exp(-sparsity_param * distance_from_goal ** 2)) - (
-			# 			np.exp(-sparsity_param * distance_from_wall ** 2))
+			if state[1] > -0.01:
+				distance_to_intermediate_goal = np.linalg.norm(self.intermediate_goal - state, 2)
+				#distance_to_wall_start = np.linalg.norm(self.intermediate_goal - state, 2)
+				#effective_distance = distance_to_goal + distance_to_intermediate_goal - distance_to_wall_start
+				return np.exp(-sparsity_param * distance_to_intermediate_goal ** 2)
+			else:
+				return np.exp(-sparsity_param * distance_to_goal ** 2)
+
 
 	def _get_obs(self):
 		gripper_pos = self.robot.arm.get_ee_pose()[0]

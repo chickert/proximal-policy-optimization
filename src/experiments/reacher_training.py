@@ -30,7 +30,7 @@ for seed in range(1, 2):
     learner = PPOLearner(
         environment=environment,
         state_space_dimension=3,
-        action_map=action_map,
+        action_space_dimension=2,
         critic_hidden_layer_units=[32, 16],
         actor_hidden_layer_units=[64, 32],
         n_iterations=75,

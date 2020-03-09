@@ -28,9 +28,10 @@ class PPOLearner:
             self,
             environment: Union[ReacherEnv, ReacherWallEnv, PusherEnv],
             state_space_dimension: int,
-            action_map: Dict[int, np.array],
+            action_space_dimension: int,
             critic_hidden_layer_units: List[int],
             actor_hidden_layer_units: List[int],
+            discrete_actor: bool = False,
             random_init_box: Optional[Box] = None,
             n_steps_per_trajectory: int = 200,
             n_trajectories_per_batch: int = 10,
@@ -59,9 +60,10 @@ class PPOLearner:
         # Initialize actor-critic policy network
         self.policy = ActorCritic(
             state_space_dimension=state_space_dimension,
-            action_map=action_map,
+            action_space_dimension=action_space_dimension,
             actor_hidden_layer_units=actor_hidden_layer_units,
             critic_hidden_layer_units=critic_hidden_layer_units,
+            discrete_actor=discrete_actor
         )
 
         # Initialize optimizer
@@ -136,7 +138,7 @@ class PPOLearner:
         discounted_rewards = self.calculate_discounted_rewards(rewards=rewards)
 
         # Return states (excluding terminal state), actions, rewards and discounted rewards
-        return states[:-1], actions, rewards, discounted_rewards
+        return states[:-1], actions[:-1], rewards, discounted_rewards
 
     def generate_argmax_trajectory(self) -> Tuple[List[np.ndarray], List[np.ndarray], List[float], List[float]]:
 
@@ -168,7 +170,7 @@ class PPOLearner:
         discounted_rewards = self.calculate_discounted_rewards(rewards=rewards)
 
         # Return states (excluding terminal state), actions, rewards and discounted rewards
-        return states[:-1], actions, rewards, discounted_rewards
+        return states[:-1], actions[:-1], rewards, discounted_rewards
 
     @timer
     def generate_batch(self) -> Tuple[List[np.ndarray], List[np.ndarray], List[float], List[float]]:
@@ -195,29 +197,32 @@ class PPOLearner:
     def get_tensors(
             self,
             states: List[np.ndarray],
+            actions: List[np.ndarray],
             discounted_rewards: List[float],
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 
         # Convert data to tensors
         states = torch.tensor(states).float().to(device).detach()
+        actions = torch.tensor(actions).float().to(device).detach()
         discounted_rewards = torch.tensor(discounted_rewards).float().unsqueeze(1).to(device).detach()
-        old_policy_probabilities = self.policy.actor(states).float().to(device).detach()
+        old_log_probabilities = self.policy.get_distribution(states).log_prob(actions).float().to(device).detach()
 
         # Normalize discounted rewards
         discounted_rewards = (discounted_rewards - torch.mean(discounted_rewards)) / (
                     torch.std(discounted_rewards) + TOL)
 
-        return states, discounted_rewards, old_policy_probabilities
+        return states, actions, discounted_rewards, old_log_probabilities
 
     def ppo_loss(
             self,
             values: torch.Tensor,
             discounted_rewards: torch.Tensor,
-            policy_probabilities: torch.Tensor,
-            old_policy_probabilities: torch.Tensor,
+            log_probabilities: torch.Tensor,
+            old_log_probabilities: torch.Tensor,
+            entropy: torch.Tensor,
             advantage_estimates: torch.Tensor,
     ) -> torch.Tensor:
-        ratio = torch.exp(torch.log(policy_probabilities + TOL) - torch.log(old_policy_probabilities + TOL))
+        ratio = torch.exp(log_probabilities - old_log_probabilities)
         actor_loss = -torch.mean(
             torch.min(
                 torch.clamp(ratio, 1 - self.clipping_param, 1 + self.clipping_param) * advantage_estimates,
@@ -225,21 +230,25 @@ class PPOLearner:
             )
         )
         critic_loss = torch.mean((discounted_rewards - values).pow(2))
-        entropy_loss = torch.mean(policy_probabilities * torch.log(policy_probabilities + TOL))
+        entropy_loss = -torch.mean(entropy)
         return actor_loss + self.critic_coefficient * critic_loss + self.entropy_coefficient * entropy_loss
 
     @timer
     def update_policy_network(
             self,
             states: torch.Tensor,
+            actions: torch.Tensor,
             discounted_rewards: torch.Tensor,
-            old_policy_probabilities: torch.Tensor
+            old_log_probabilities: torch.Tensor
     ) -> None:
 
         for _ in range(self.n_epochs):
 
             # Get policy network outputs
-            policy_probabilities, values = self.policy(states)
+            log_probabilities, values, entropy = self.policy(
+                states=states,
+                actions=actions
+            )
 
             # Get advantage estimates
             advantage_estimates = discounted_rewards - values.detach()
@@ -248,8 +257,8 @@ class PPOLearner:
             loss = self.ppo_loss(
                 values=values,
                 discounted_rewards=discounted_rewards,
-                policy_probabilities=policy_probabilities,
-                old_policy_probabilities=old_policy_probabilities,
+                log_probabilities=log_probabilities,
+                old_log_probabilities=old_log_probabilities,
                 advantage_estimates=advantage_estimates
             )
 
@@ -280,16 +289,18 @@ class PPOLearner:
             self.track_performance(rewards=rewards)
 
             # Convert data to PyTorch tensors
-            states, discounted_rewards, old_policy_probabilities = self.get_tensors(
+            states, actions, discounted_rewards, old_log_probabilities = self.get_tensors(
                 states=states,
+                actions=actions,
                 discounted_rewards=discounted_rewards
             )
 
             # Perform gradient updates
             self.update_policy_network(
                 states=states,
+                actions=actions,
                 discounted_rewards=discounted_rewards,
-                old_policy_probabilities=old_policy_probabilities
+                old_policy_probabilities=old_log_probabilities
             )
 
             # Update hyper-parameters
