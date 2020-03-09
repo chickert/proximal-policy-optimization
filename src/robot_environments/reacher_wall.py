@@ -42,9 +42,10 @@ class ReacherWallEnv:
 		self.wall_length = 0.1
 		self.wall_start = self.wall_center + np.array([self.wall_length/2, 0, 0])
 		self.wall_end = self.wall_center - np.array([self.wall_length/2, 0, 0])
-		self.wall_id = self.robot.pb_client.load_geom('box', size=[self.wall_length, 0.01, 0.15], mass=0,
+		self.wall_id = self.robot.pb_client.load_geom('box', size=[self.wall_length, 0.01, 0.2], mass=0,
 													 base_pos=self.wall_center.tolist(),
 													 rgba=[1, 0, 0, 0.4])
+		self.intermediate_goal = self.wall_end - np.array([0.02, 0, 0])
 		self.marker_id = self.robot.pb_client.load_geom('box', size=0.05, mass=1,
 													 base_pos=self.goal.tolist(),
 													 rgba=[0, 1, 0, 0.4])
@@ -79,14 +80,15 @@ class ReacherWallEnv:
 		reward = self.compute_reward_reach_wall(state)
 		return state, reward, done, info
 
-	def compute_reward_reach_wall(self, state):
+	def compute_reward_reach_wall(self, state, sparsity_param=2.0):
 		if (self.wall_center[1] - self.goal[1] > 0) & (state[1] - self.wall_center[1] < 0) \
 				or (self.wall_center[1] - self.goal[1] < 0) & (state[1] - self.wall_center[1] > 0):
 			distance_to_goal = np.linalg.norm(self.goal - state, 2)
-			return np.exp(-2 * distance_to_goal ** 2)
+			constant = 1 - np.exp(-sparsity_param * np.linalg.norm(self.intermediate_goal - self.goal, 2) ** 2)
+			return np.exp(-sparsity_param * distance_to_goal ** 2) + constant
 		else:
-			distance_to_intermediate_goal = np.linalg.norm(state - self.wall_end - np.array([0.02, 0, 0]), 2)
-			return np.exp(-2 * distance_to_intermediate_goal ** 2) - 1
+			distance_to_intermediate_goal = np.linalg.norm(state - self.intermediate_goal, 2)
+			return np.exp(-sparsity_param * distance_to_intermediate_goal ** 2)
 
 
 	def _get_obs(self):

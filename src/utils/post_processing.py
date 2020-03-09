@@ -1,8 +1,11 @@
-from ppo_alogrithm import PPOLearner
+from algorithm.ppo import PPOLearner
 import pandas as pd
 import numpy as np
 from cv2 import VideoWriter, VideoWriter_fourcc
+from collections import Counter
+import logging
 
+logger = logging.getLogger(__name__)
 
 def save_training_rewards(learner: PPOLearner, path: str) -> None:
     # Save training rewards as csv
@@ -15,22 +18,31 @@ def save_training_rewards(learner: PPOLearner, path: str) -> None:
     df.to_csv(f"{path}.csv")
 
 
-def save_videos(learner: PPOLearner, path: str, n_videos: int = 1) -> None:
+def save_video(learner: PPOLearner, path: str, use_argmax: bool = True) -> None:
     # Save videos of agent as mp4
-
-    robot = learner.environment.robot
-    robot.cam.setup_camera(focus_pt=robot.arm.robot_base_pos, dist=3, yaw=55, pitch=-30, roll=0)
-    for i in range(n_videos):
-        file_path = f"{path}_{i+1}.mp4"
-        output = VideoWriter(file_path, VideoWriter_fourcc(*'mp4v'), 30, (640, 480))
-        image = robot.cam.get_images(get_rgb=True, get_depth=False)[0]
+    learner.environment.robot.cam.setup_camera(
+        focus_pt=learner.environment.robot.arm.robot_base_pos,
+        dist=3,
+        yaw=55,
+        pitch=-30,
+        roll=0
+    )
+    file_path = f"{path}.mp4"
+    output = VideoWriter(file_path, VideoWriter_fourcc(*'mp4v'), 30, (640, 480))
+    image = learner.environment.robot.cam.get_images(get_rgb=True, get_depth=False)[0]
+    output.write(np.array(image))
+    learner.policy = learner.best_policy
+    if use_argmax:
+        _, actions, _, _ = learner.generate_argmax_trajectory()
+    else:
+        _, actions, _, _ = learner.generate_sample_trajectory()
+    logger.info(f"Action counts: {Counter(map(tuple, actions))}")
+    learner.environment.reset()
+    for action in actions:
+        learner.environment.step(action)
+        image = learner.environment.robot.cam.get_images(get_rgb=True, get_depth=False)[0]
         output.write(np.array(image))
-        states, _, _ = learner.generate_trajectory()
-        for state in states:
-            print(robot.arm.set_ee_pose(state, ignore_phyics=True))
-            image = robot.cam.get_images(get_rgb=True, get_depth=False)[0]
-            output.write(np.array(image))
-        output.release()
+    output.release()
 
 
 

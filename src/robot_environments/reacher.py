@@ -15,7 +15,7 @@ import pybullet as p
 
 
 class ReacherEnv:
-    def __init__(self, action_repeat=1, render=False):
+    def __init__(self, action_repeat=2, render=False):
         self._action_repeat = action_repeat
         self.robot = Robot('ur5e_stick', pb=True, pb_cfg={'gui': render, 'realtime': False})
         self.ee_ori = [-np.sqrt(2) / 2, np.sqrt(2) / 2, 0, 0]
@@ -29,7 +29,7 @@ class ReacherEnv:
             dtype=np.float32
         )
         self.goal = np.array([0.75, -0.3, 1.0])
-        self.init = np.array([0.5, 0.1, 1.0])
+        self.init = np.array([0.4, 0.2, 1.0])
         self.robot.arm.reset()
 
         ori = euler2quat([0, 0, np.pi / 2])
@@ -72,7 +72,7 @@ class ReacherEnv:
         reward = self.compute_reward_reach(state)
         return state, reward, done, info
 
-    def compute_reward_reach(self, state, sparsity_param=3.0):
+    def compute_reward_reach(self, state, sparsity_param=2.0):
         distance_from_goal = np.linalg.norm(self.goal - state, 2)
         return np.exp(-sparsity_param*distance_from_goal**2)
 
