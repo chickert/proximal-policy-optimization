@@ -49,9 +49,9 @@ class PPOLearner:
             seed: int = 0
     ):
         # Set seed
-        self.seed = seed
         torch.manual_seed(seed)
         np.random.seed(seed)
+        self.seed = seed
 
         # Set environment attribute
         self.environment = environment
@@ -240,6 +240,8 @@ class PPOLearner:
 
             # Get policy network outputs
             policy_probabilities, values = self.policy(states)
+            policy_probabilities = policy_probabilities.to(device)
+            values = values.to(device)
 
             # Get advantage estimates
             advantage_estimates = discounted_rewards - values.detach()

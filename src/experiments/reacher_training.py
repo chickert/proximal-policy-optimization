@@ -1,8 +1,6 @@
 import logging
 
 import numpy as np
-import torch
-
 from algorithm.ppo import PPOLearner
 from robot_environments.reacher import ReacherEnv
 from utils.post_processing import save_training_rewards, save_video
@@ -23,25 +21,25 @@ action_space = [
 ]
 action_map = {i: step_size * np.array(action) for i, action in enumerate(action_space)}
 
-# Run training over multiple random seeds
-for seed in range(1, 2):
+# Initialize learner
+seed = 0
+learner = PPOLearner(
+    environment=environment,
+    state_space_dimension=3,
+    action_map=action_map,
+    critic_hidden_layer_units=[16, 8],
+    actor_hidden_layer_units=[64, 32],
+    n_steps_per_trajectory=200,
+    n_trajectories_per_batch=20,
+    n_epochs=4,
+    n_iterations=75,
+    seed=seed
+)
 
-    # Initialize learner
-    learner = PPOLearner(
-        environment=environment,
-        state_space_dimension=3,
-        action_map=action_map,
-        critic_hidden_layer_units=[32, 16],
-        actor_hidden_layer_units=[64, 32],
-        n_iterations=75,
-        seed=seed
-    )
+# Train learner
+learner.train()
 
-    # Train learner
-    learner.train()
+# Save outputs
+save_training_rewards(learner=learner, path="reacher_training_rewards")
+save_video(learner=learner, path=f"reacher_{seed}_argmax_video", use_argmax=False)
 
-    # Save outputs
-    save_training_rewards(learner=learner, path="reacher_training_rewards")
-    save_video(learner=learner, path=f"reacher_{seed}_argmax_video", use_argmax=True)
-    for i in range(5):
-        save_video(learner=learner, path=f"reacher_{seed}_random_video_{i}", use_argmax=False)
