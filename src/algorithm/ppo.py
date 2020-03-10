@@ -33,7 +33,7 @@ class PPOLearner:
             actor_hidden_layer_units: List[int],
             discrete_actor: bool = False,
             action_step_size: float = 1.0,
-            actor_std: float = 5e-2,
+            actor_std: float = 0.1,
             random_init_box: Optional[Box] = None,
             n_steps_per_trajectory: int = 200,
             n_trajectories_per_batch: int = 10,
@@ -208,7 +208,8 @@ class PPOLearner:
 
         # Convert data to tensors
         states = torch.tensor(states).float().to(device).detach()
-        actions = list(map(self.policy.inverse_action_map, actions))
+        if self.policy.discrete_actor:
+            actions = list(map(self.policy.inverse_action_map, actions))
         actions = torch.tensor(actions).float().to(device).detach()
         discounted_rewards = torch.tensor(discounted_rewards).float().unsqueeze(1).to(device).detach()
         old_log_probabilities = self.policy.get_distribution(states).log_prob(actions).float().to(device).detach()

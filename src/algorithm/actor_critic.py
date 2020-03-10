@@ -83,8 +83,6 @@ class ActorCritic(nn.Module):
         ]
         if self.discrete_actor:
             actor_layers += [nn.Softmax(dim=-1)]
-        else:
-            actor_layers += [nn.Tanh()]
         self.actor = nn.Sequential(*actor_layers)
 
         # Make critic network
