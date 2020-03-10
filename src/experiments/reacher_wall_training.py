@@ -4,47 +4,43 @@ import numpy as np
 
 from algorithm.ppo import PPOLearner
 from robot_environments.reacher_wall import ReacherWallEnv
+from collections import Counter
 from utils.post_processing import save_training_rewards, save_video
 
 logger = logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Set environment
-environment = ReacherWallEnv(render=True, use_naive_reward=False)
+environment = ReacherWallEnv(render=False, use_naive_reward=True)
 
 # Define action map
-step_size = 2.0
+step_size = 3.0
 action_space = [
-    [0, 0],
-    [1, 0],
-    [-1, 0],
     [0, -1],
     [0, 1],
+    [1, 0],
+    [-1, 0],
+    [0, 0]
 ]
-def action_map(policy_probabilities):
-    action_map_dict = {i: step_size * np.array(action) for i, action in enumerate(action_space)}
+action_map = {i: step_size * np.array(action) for i, action in enumerate(action_space)}
 
-# Run training over multiple random seeds
-for seed in [9000]:
+# Initialize learner
+seed = 1
+learner = PPOLearner(
+    environment=environment,
+    state_space_dimension=3,
+    action_map=action_map,
+    critic_hidden_layer_units=[32, 16],
+    actor_hidden_layer_units=[64, 32],
+    n_iterations=75,
+    n_steps_per_trajectory=200,
+    n_trajectories_per_batch=20,
+    seed=seed
+)
 
-    # Initialize learner
-    learner = PPOLearner(
-        environment=environment,
-        state_space_dimension=3,
-        action_map=action_map,
-        critic_hidden_layer_units=[32, 16],
-        actor_hidden_layer_units=[64, 32],
-        n_iterations=20,
-        n_trajectories_per_batch=20,
-        learning_rate=3e-4,
-        n_epochs=3,
-        seed=seed
-    )
+# Train learner
+learner.train()
 
-    # Train learner
-    learner.train()
-
-    # Save outputs
-    #save_training_rewards(learner=learner, path="reacher_training_rewards")
-    #save_video(learner=learner, path=f"reacher_wall_{seed}_argmax_video", use_argmax=True)
-    for i in range(2):
-        save_video(learner=learner, path=f"reacher_wall_{seed}_random_video_{i}", use_argmax=False)
+# Save outputs
+save_training_rewards(learner=learner, path="reacher_wall_training_rewards")
+#save_video(learner=learner, path=f"reacher_wall_{seed}_video", use_argmax=False)

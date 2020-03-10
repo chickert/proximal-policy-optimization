@@ -41,5 +41,5 @@ learner.train()
 
 # Save outputs
 save_training_rewards(learner=learner, path="reacher_training_rewards")
-save_video(learner=learner, path=f"reacher_{seed}_argmax_video", use_argmax=False)
+save_video(learner=learner, path=f"reacher_{seed}_video")
 

@@ -78,14 +78,14 @@ class PusherEnv:
 		reward = self.compute_reward_push(state)
 		return state, reward, done, info
 
-	def compute_reward_push(self, state, sparsity_param=2.5, weight=0.5):
+	def compute_reward_push(self, state, sparsity_param=1.0):
 		gripper_state = np.array(state[:3])
 		obj_state = np.array(state[3:])
 		distance_from_obj_to_gripper = np.linalg.norm(obj_state - gripper_state, 2)
 		distance_from_obj_to_goal = np.linalg.norm(obj_state - self.goal, 2)
-		weighted_distance = weight*distance_from_obj_to_gripper + (1 - weight)*distance_from_obj_to_goal
+		total_distance = distance_from_obj_to_gripper + distance_from_obj_to_goal
 		object_off_table = float(obj_state[2] < 0.9)
-		return 2*np.exp(-sparsity_param * weighted_distance ** 2)-1 - object_off_table
+		return 2*np.exp(-sparsity_param * total_distance ** 2)-1 - object_off_table
 
 
 	def _get_obs(self):
