@@ -41,6 +41,4 @@ learner.train()
 
 # Save outputs
 save_training_rewards(learner=learner, path="pusher_training_rewards")
-save_video(learner=learner, path=f"pusher_{seed}_video_1", use_argmax=False)
-save_video(learner=learner, path=f"pusher_{seed}_video_2", use_argmax=False)
-save_video(learner=learner, path=f"pusher_{seed}_video_3", use_argmax=False)
+save_video(learner=learner, path=f"pusher_{seed}_video")

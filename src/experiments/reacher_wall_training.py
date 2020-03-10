@@ -11,7 +11,7 @@ logger = logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Set environment
-environment = ReacherWallEnv(render=False, use_naive_reward=True)
+environment = ReacherWallEnv(render=False, use_naive_reward=False)
 
 # Define action map
 step_size = 3.0
@@ -25,7 +25,7 @@ action_space = [
 action_map = {i: step_size * np.array(action) for i, action in enumerate(action_space)}
 
 # Initialize learner
-seed = 1
+seed = 0
 learner = PPOLearner(
     environment=environment,
     state_space_dimension=3,
@@ -43,4 +43,4 @@ learner.train()
 
 # Save outputs
 save_training_rewards(learner=learner, path="reacher_wall_training_rewards")
-#save_video(learner=learner, path=f"reacher_wall_{seed}_video", use_argmax=False)
+save_video(learner=learner, path=f"reacher_wall_{seed}_video", use_argmax=False)
