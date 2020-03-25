@@ -1,15 +1,12 @@
 import logging
-from copy import deepcopy
-from typing import Tuple, Union, Dict, List, Optional
+from typing import Tuple, List, Optional, Dict
 
 import numpy as np
 import torch
-from gym.spaces import Box
+import pathos.multiprocessing as mp
 
-from algorithm.actor_critic import ActorCritic
-from robot_environments.pusher import PusherEnv
-from robot_environments.reacher import ReacherEnv
-from robot_environments.reacher_wall import ReacherWallEnv
+from models.actor_critic import ActorCritic
+from models.environment import Environment
 from utils.misc import concatenate_lists, timer
 
 # Set up device
@@ -18,37 +15,30 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Set up logging
 logger = logging.getLogger(__name__)
 
-# Constants
-TOL = 1e-10
-
 
 class PPOLearner:
 
     def __init__(
             self,
-            environment: Union[ReacherEnv, ReacherWallEnv, PusherEnv],
+            environment: Environment,
             state_space_dimension: int,
             action_space_dimension: int,
             critic_hidden_layer_units: List[int],
             actor_hidden_layer_units: List[int],
             discrete_actor: bool = False,
-            action_step_size: float = 1.0,
+            action_map: Optional[Dict[int, np.ndarray]] = None,
             actor_std: float = 0.1,
-            random_init_box: Optional[Box] = None,
-            n_steps_per_trajectory: int = 200,
-            n_trajectories_per_batch: int = 10,
+            n_steps_per_trajectory: int = 100,
+            n_trajectories_per_batch: int = 50,
             n_epochs: int = 4,
-            n_iterations: int = 50,
+            n_iterations: int = 100,
             learning_rate: float = 3e-4,
             discount: float = 0.99,
             clipping_param: float = 0.2,
             critic_coefficient: float = 1.0,
-            init_entropy_coefficient: float = 0.01,
-            entropy_decay: float = 0.999,
-            init_reversion_threshold: float = 0.4,
-            reversion_threshold_decay: float = 0.95,
-            min_reversion_threshold: float = 0.1,
-            allow_policy_reversions: bool = False,
+            entropy_coefficient: float = 0.01,
+            entropy_decay: float = 1.0,
+            parallelize_batch_generation: bool = True,
             seed: int = 0
     ):
         # Set seed
@@ -66,7 +56,7 @@ class PPOLearner:
             actor_hidden_layer_units=actor_hidden_layer_units,
             critic_hidden_layer_units=critic_hidden_layer_units,
             discrete_actor=discrete_actor,
-            action_step_size=action_step_size,
+            action_map=action_map,
             actor_std=actor_std
         )
 
@@ -74,7 +64,6 @@ class PPOLearner:
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=learning_rate)
 
         # Set hyper-parameter attributes
-        self.random_init_box = random_init_box
         self.n_steps_per_trajectory = n_steps_per_trajectory
         self.n_trajectories_per_batch = n_trajectories_per_batch
         self.n_epochs = n_epochs
@@ -82,148 +71,109 @@ class PPOLearner:
         self.discount = discount
         self.clipping_param = clipping_param
         self.critic_coefficient = critic_coefficient
-        self.entropy_coefficient = init_entropy_coefficient
+        self.entropy_coefficient = entropy_coefficient
         self.entropy_decay = entropy_decay
-        self.reversion_threshold = init_reversion_threshold
-        self.reversion_threshold_decay = reversion_threshold_decay
-        self.min_reversion_threshold = min_reversion_threshold
-        self.allow_policy_reversions = allow_policy_reversions
-        if random_init_box is None:
-            self.randomize_init_state = False
-        else:
-            self.randomize_init_state = True
 
         # Initialize attributes for performance tracking
         self.mean_rewards = []
-        self.best_mean_reward = -np.inf
-        self.best_policy = deepcopy(self.policy)
+        self.mean_discounted_returns = []
 
-    def calculate_discounted_rewards(self, rewards: List[float]) -> List[float]:
-        discounted_rewards = []
-        discounted_reward = 0
+        # Set other attributes
+        self.parallelize_batch_generation = parallelize_batch_generation
+
+    def calculate_discounted_returns(self, rewards: List[float]) -> List[float]:
+        discounted_returns = []
+        discounted_return = 0
         for t in reversed(range(self.n_steps_per_trajectory)):
-            discounted_reward = rewards[t] + self.discount * discounted_reward
-            discounted_rewards.insert(0, discounted_reward)
-        return discounted_rewards
+            discounted_return = rewards[t] + self.discount * discounted_return
+            discounted_returns.insert(0, discounted_return)
+        return discounted_returns
 
-    def generate_sample_trajectory(self) -> Tuple[List[np.ndarray], List[np.ndarray], List[float], List[float]]:
+    def generate_trajectory(
+            self,
+            use_argmax: bool = False
+    ) -> Tuple[List[np.ndarray], List[np.ndarray], List[float], List[float]]:
 
         states = []
         actions = []
         rewards = []
 
-        # Set initial state
-        if self.randomize_init_state:
-            nominal_init = self.environment.init
-            self.environment.init = self.random_init_box.sample()
-            self.environment.reset()
-        state = self.environment._get_obs()
-
-        # Generate a sample trajectory under the current policy
+        # Generate a trajectory under the current policy
         for _ in range(self.n_steps_per_trajectory + 1):
+
             # Sample from policy and receive feedback from environment
-            action = self.policy.sample_action(state)
-            new_state, reward, done, info = self.environment.step(action)
-            #print(action)
+            if use_argmax:
+                action = self.policy.get_argmax_action(self.environment.state)
+            else:
+                action = self.policy.sample_action(self.environment.state)
 
-            # Store information from step
-            states.append(state)
+            # Store state and action
+            states.append(self.environment.state)
             actions.append(action)
+
+            # Perform update
+            reward, done = self.environment.update(action)
             rewards.append(reward)
-
-            # Update state
-            state = new_state
-
-        # Reset environment to initial state
-        if self.randomize_init_state:
-            self.environment.init = nominal_init
-        self.environment.reset()
-
-        # Calculate discounted rewards
-        discounted_rewards = self.calculate_discounted_rewards(rewards=rewards)
-
-        # Return states (excluding terminal state), actions, rewards and discounted rewards
-        return states[:-1], actions[:-1], rewards, discounted_rewards
-
-    def generate_argmax_trajectory(self) -> Tuple[List[np.ndarray], List[np.ndarray], List[float], List[float]]:
-
-        states = []
-        actions = []
-        rewards = []
-
-        # Set initial state
-        state = self.environment._get_obs()
-
-        # Generate trajectory corresponding to argmax of probabilities under current policy
-        for _ in range(self.n_steps_per_trajectory + 1):
-            # Get argmax action from policy and receive feedback from environment
-            action = self.policy.get_argmax_action(state)
-            new_state, reward, done, info = self.environment.step(action)
-
-            # Store information from step
-            states.append(state)
-            actions.append(action)
-            rewards.append(reward)
-
-            # Update state
-            state = new_state
+            if done:
+                break
 
         # Reset environment to initial state
         self.environment.reset()
 
         # Calculate discounted rewards
-        discounted_rewards = self.calculate_discounted_rewards(rewards=rewards)
+        discounted_returns = self.calculate_discounted_returns(rewards=rewards)
 
         # Return states (excluding terminal state), actions, rewards and discounted rewards
-        return states[:-1], actions[:-1], rewards, discounted_rewards
+        return states[:-1], actions[:-1], rewards, discounted_returns
+
 
     @timer
     def generate_batch(self) -> Tuple[List[np.ndarray], List[np.ndarray], List[float], List[float]]:
 
-        # Generate trajectories
-        trajectories = [self.generate_sample_trajectory() for _ in range(self.n_trajectories_per_batch)]
+        # Generate batch of trajectories
+        if self.parallelize_batch_generation:
+            pool = mp.Pool(mp.cpu_count())
+            trajectories = pool.starmap(self.generate_trajectory, [() for _ in range(self.n_trajectories_per_batch)])
+        else:
+            trajectories = [self.generate_trajectory() for _ in range(self.n_trajectories_per_batch)]
 
         # Unzip and return trajectories
-        states, actions, rewards, discounted_rewards = map(concatenate_lists, zip(*trajectories))
-        return states, actions, rewards, discounted_rewards
+        states, actions, rewards, discounted_returns = map(concatenate_lists, zip(*trajectories))
+        return states, actions, rewards, discounted_returns
 
-    def track_performance(self, rewards):
+    def track_performance(self, rewards: List[float], discounted_returns: List[float]) -> None:
         mean_reward = np.mean(rewards)
+        mean_discounted_return = np.mean(discounted_returns)
         self.mean_rewards.append(mean_reward)
+        self.mean_discounted_returns.append(mean_discounted_return)
         logger.info(f"Mean reward: {mean_reward}")
-        if mean_reward > self.best_mean_reward:
-            self.best_mean_reward = mean_reward
-            self.best_policy = deepcopy(self.policy)
-        elif ((self.best_mean_reward - mean_reward) / self.best_mean_reward > self.reversion_threshold) \
-                & self.allow_policy_reversions:
-            self.policy = self.best_policy
-            logger.info(f"Reverting policy!")
+        logger.info(f"Mean discounted return: {mean_discounted_return}")
 
     def get_tensors(
             self,
             states: List[np.ndarray],
             actions: List[np.ndarray],
-            discounted_rewards: List[float],
+            discounted_returns: List[float],
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 
         # Convert data to tensors
         states = torch.tensor(states).float().to(device).detach()
         if self.policy.discrete_actor:
-            actions = list(map(self.policy.inverse_action_map, actions))
+            actions = [self.policy.inverse_action_map[tuple(action)] for action in actions]
         actions = torch.tensor(actions).float().to(device).detach()
-        discounted_rewards = torch.tensor(discounted_rewards).float().unsqueeze(1).to(device).detach()
+        discounted_returns = torch.tensor(discounted_returns).float().unsqueeze(1).to(device).detach()
         old_log_probabilities = self.policy.get_distribution(states).log_prob(actions).float().to(device).detach()
 
         # Normalize discounted rewards
-        discounted_rewards = (discounted_rewards - torch.mean(discounted_rewards)) / (
-                    torch.std(discounted_rewards) + TOL)
+        discounted_returns = (discounted_returns - torch.mean(discounted_returns)) / (
+                    torch.std(discounted_returns) + 1e-5)
 
-        return states, actions, discounted_rewards, old_log_probabilities
+        return states, actions, discounted_returns, old_log_probabilities
 
     def ppo_loss(
             self,
             values: torch.Tensor,
-            discounted_rewards: torch.Tensor,
+            discounted_returns: torch.Tensor,
             log_probabilities: torch.Tensor,
             old_log_probabilities: torch.Tensor,
             entropy: torch.Tensor,
@@ -236,16 +186,16 @@ class PPOLearner:
                 ratio * advantage_estimates
             )
         )
-        critic_loss = torch.mean((discounted_rewards - values).pow(2))
+        critic_loss = torch.mean((discounted_returns - values).pow(2))
         entropy_loss = -torch.mean(entropy)
-        return actor_loss + self.critic_coefficient * critic_loss + self.entropy_coefficient * entropy_loss
+        return actor_loss + self.critic_coefficient*critic_loss + self.entropy_coefficient*entropy_loss
 
     @timer
     def update_policy_network(
             self,
             states: torch.Tensor,
             actions: torch.Tensor,
-            discounted_rewards: torch.Tensor,
+            discounted_returns: torch.Tensor,
             old_log_probabilities: torch.Tensor
     ) -> None:
 
@@ -258,12 +208,12 @@ class PPOLearner:
             )
 
             # Get advantage estimates
-            advantage_estimates = discounted_rewards - values.detach()
+            advantage_estimates = discounted_returns - values.detach()
 
             # Calculate loss
             loss = self.ppo_loss(
                 values=values,
-                discounted_rewards=discounted_rewards,
+                discounted_returns=discounted_returns,
                 log_probabilities=log_probabilities,
                 old_log_probabilities=old_log_probabilities,
                 entropy=entropy,
@@ -280,9 +230,7 @@ class PPOLearner:
         # Decay entropy coefficient
         self.entropy_coefficient = self.entropy_decay * self.entropy_coefficient
 
-        # Decay reversion threshold
-        self.reversion_threshold = max(self.reversion_threshold_decay * self.reversion_threshold,
-                                       self.min_reversion_threshold)
+        # Do other stuff in the future
 
     def train(self) -> None:
 
@@ -291,23 +239,23 @@ class PPOLearner:
             logger.info(f"Iteration: {i + 1}")
 
             # Generate batch
-            states, actions, rewards, discounted_rewards = self.generate_batch()
+            states, actions, rewards, discounted_returns = self.generate_batch()
 
             # Track performance
-            self.track_performance(rewards=rewards)
+            self.track_performance(rewards=rewards, discounted_returns=discounted_returns)
 
             # Convert data to PyTorch tensors
-            states, actions, discounted_rewards, old_log_probabilities = self.get_tensors(
+            states, actions, discounted_returns, old_log_probabilities = self.get_tensors(
                 states=states,
                 actions=actions,
-                discounted_rewards=discounted_rewards
+                discounted_returns=discounted_returns
             )
 
             # Perform gradient updates
             self.update_policy_network(
                 states=states,
                 actions=actions,
-                discounted_rewards=discounted_rewards,
+                discounted_returns=discounted_returns,
                 old_log_probabilities=old_log_probabilities
             )
 
