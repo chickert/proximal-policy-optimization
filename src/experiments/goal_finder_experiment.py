@@ -19,24 +19,6 @@ DISCRETE_ACTOR = False
 TRAINING_REWARDS_PATH = "../../results/goal_finder/training_rewards"
 TRAJECTORY_PLOTS_PATH = "../../results/goal_finder/trajectory_plot"
 
-# Initialize environment
-environment = GoalFinderEnv(
-    initial_state=np.zeros(N_DIMENSIONS),
-    goal_state=np.ones(N_DIMENSIONS),
-    sparsity_param=SPARSITY_PARAM,
-    reward_noise=REWARD_NOISE
-)
-
-# Make discrete action map (if required)
-if DISCRETE_ACTOR:
-    action_map = {
-        key: DISCRETE_STEP_SIZE * action for key, action in enumerate(
-            [np.identity(N_DIMENSIONS)[i] for i in range(N_DIMENSIONS)]
-            + [-np.identity(N_DIMENSIONS)[i] for i in range(N_DIMENSIONS)]
-            + [np.zeros(N_DIMENSIONS)]
-        )
-    }
-
 
 def save_trajectory_plots(
         learner: PPOLearner,
@@ -81,32 +63,58 @@ def save_trajectory_plots(
     fig.savefig(path)
 
 
-for seed in range(N_TRIALS):
-    if DISCRETE_ACTOR:
-        leaner = PPOLearner(
-            environment=environment,
-            state_space_dimension=N_DIMENSIONS,
-            action_space_dimension=len(action_map),
-            actor_hidden_layer_units=ACTOR_HIDDEN_LAYER_UNITS,
-            critic_hidden_layer_units=CRITIC_HIDDEN_LAYER_UNITS,
-            discrete_actor=True,
-            action_map=action_map,
-            seed=seed
-        )
-    else:
-        learner = PPOLearner(
-            environment=environment,
-            state_space_dimension=N_DIMENSIONS,
-            action_space_dimension=N_DIMENSIONS,
-            actor_hidden_layer_units=ACTOR_HIDDEN_LAYER_UNITS,
-            critic_hidden_layer_units=CRITIC_HIDDEN_LAYER_UNITS,
-            seed=seed
-        )
-    learner.train()
-    learner.save_training_rewards(path=TRAINING_REWARDS_PATH)
-    if N_DIMENSIONS == 2:
-        save_trajectory_plots(
-            learner=learner,
-            path=f"{TRAJECTORY_PLOTS_PATH}_{seed}"
-        )
+def run_experiment() -> None:
 
+    # Initialize environment
+    environment = GoalFinderEnv(
+        initial_state=np.zeros(N_DIMENSIONS),
+        goal_state=np.ones(N_DIMENSIONS),
+        sparsity_param=SPARSITY_PARAM,
+        reward_noise=REWARD_NOISE
+    )
+
+    for seed in range(N_TRIALS):
+
+        # Initialize learner
+        if DISCRETE_ACTOR:
+            action_map = {
+                key: DISCRETE_STEP_SIZE * action for key, action in enumerate(
+                    [np.identity(N_DIMENSIONS)[i] for i in range(N_DIMENSIONS)]
+                    + [-np.identity(N_DIMENSIONS)[i] for i in range(N_DIMENSIONS)]
+                    + [np.zeros(N_DIMENSIONS)]
+                )
+            }
+            leaner = PPOLearner(
+                environment=environment,
+                state_space_dimension=N_DIMENSIONS,
+                action_space_dimension=len(action_map),
+                actor_hidden_layer_units=ACTOR_HIDDEN_LAYER_UNITS,
+                critic_hidden_layer_units=CRITIC_HIDDEN_LAYER_UNITS,
+                discrete_actor=True,
+                action_map=action_map,
+                seed=seed
+            )
+        else:
+            learner = PPOLearner(
+                environment=environment,
+                state_space_dimension=N_DIMENSIONS,
+                action_space_dimension=N_DIMENSIONS,
+                actor_hidden_layer_units=ACTOR_HIDDEN_LAYER_UNITS,
+                critic_hidden_layer_units=CRITIC_HIDDEN_LAYER_UNITS,
+                seed=seed
+            )
+
+        # Train learner
+        learner.train()
+
+        # Save learner outputs
+        learner.save_training_rewards(path=TRAINING_REWARDS_PATH)
+        if N_DIMENSIONS == 2:
+            save_trajectory_plots(
+                learner=learner,
+                path=f"{TRAJECTORY_PLOTS_PATH}_{seed}"
+            )
+
+
+if __name__ == "__main__":
+    run_experiment()
