@@ -2,6 +2,7 @@ import logging
 from typing import Tuple, List, Optional, Dict
 
 import numpy as np
+import pandas as pd
 import torch
 import pathos.multiprocessing as mp
 
@@ -27,17 +28,18 @@ class PPOLearner:
             actor_hidden_layer_units: List[int],
             discrete_actor: bool = False,
             action_map: Optional[Dict[int, np.ndarray]] = None,
-            actor_std: float = 0.1,
-            n_steps_per_trajectory: int = 100,
-            n_trajectories_per_batch: int = 50,
+            n_steps_per_trajectory: int = 32,
+            n_trajectories_per_batch: int = 128,
             n_epochs: int = 4,
-            n_iterations: int = 100,
+            n_iterations: int = 250,
             learning_rate: float = 3e-4,
             discount: float = 0.99,
             clipping_param: float = 0.2,
             critic_coefficient: float = 1.0,
             entropy_coefficient: float = 0.01,
             entropy_decay: float = 1.0,
+            actor_std: float = 0.05,
+            actor_std_decay: float = 0.999,
             parallelize_batch_generation: bool = True,
             seed: int = 0
     ):
@@ -73,6 +75,7 @@ class PPOLearner:
         self.critic_coefficient = critic_coefficient
         self.entropy_coefficient = entropy_coefficient
         self.entropy_decay = entropy_decay
+        self.actor_std_decay = actor_std_decay
 
         # Initialize attributes for performance tracking
         self.mean_rewards = []
@@ -132,22 +135,18 @@ class PPOLearner:
 
         # Generate batch of trajectories
         if self.parallelize_batch_generation:
-            pool = mp.Pool(mp.cpu_count())
-            trajectories = pool.starmap(self.generate_trajectory, [() for _ in range(self.n_trajectories_per_batch)])
+            try:
+                pool = mp.Pool(mp.cpu_count())
+                trajectories = pool.starmap(self.generate_trajectory, [() for _ in range(self.n_trajectories_per_batch)])
+            except BlockingIOError:
+                logger.info("BlockingIOError: parallelized batch generation failed.")
+                trajectories = [self.generate_trajectory() for _ in range(self.n_trajectories_per_batch)]
         else:
             trajectories = [self.generate_trajectory() for _ in range(self.n_trajectories_per_batch)]
 
         # Unzip and return trajectories
         states, actions, rewards, discounted_returns = map(concatenate_lists, zip(*trajectories))
         return states, actions, rewards, discounted_returns
-
-    def track_performance(self, rewards: List[float], discounted_returns: List[float]) -> None:
-        mean_reward = np.mean(rewards)
-        mean_discounted_return = np.mean(discounted_returns)
-        self.mean_rewards.append(mean_reward)
-        self.mean_discounted_returns.append(mean_discounted_return)
-        logger.info(f"Mean reward: {mean_reward}")
-        logger.info(f"Mean discounted return: {mean_discounted_return}")
 
     def get_tensors(
             self,
@@ -230,8 +229,13 @@ class PPOLearner:
         # Decay entropy coefficient
         self.entropy_coefficient = self.entropy_decay * self.entropy_coefficient
 
+        # Decay actor standard deviation
+        if not self.policy.discrete_actor:
+            self.policy.actor_std = self.actor_std_decay * self.policy.actor_std
+
         # Do other stuff in the future
 
+    @timer
     def train(self) -> None:
 
         for i in range(self.n_iterations):
@@ -242,7 +246,8 @@ class PPOLearner:
             states, actions, rewards, discounted_returns = self.generate_batch()
 
             # Track performance
-            self.track_performance(rewards=rewards, discounted_returns=discounted_returns)
+            self.mean_rewards.append(np.mean(rewards))
+            self.mean_discounted_returns.append(np.mean(discounted_returns))
 
             # Convert data to PyTorch tensors
             states, actions, discounted_returns, old_log_probabilities = self.get_tensors(
@@ -262,6 +267,18 @@ class PPOLearner:
             # Update hyper-parameters
             self.update_hyperparameters()
 
+            # Log performance
+            logger.info(f"Mean reward: {self.mean_rewards[-1]}")
+            logger.info(f"Mean discounted return: {self.mean_discounted_returns[-1]}")
             logger.info("-" * 50)
+
+    def save_training_rewards(self, path: str) -> None:
+        try:
+            df = pd.read_csv(f"{path}.csv")
+            df[self.seed] = self.mean_rewards
+        except FileNotFoundError:
+            df = pd.DataFrame(self.mean_rewards, columns=[self.seed])
+            df.index.name = "iteration"
+        df.to_csv(f"{path}.csv")
 
 
