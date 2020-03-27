@@ -31,7 +31,7 @@ class PPOLearner:
             n_steps_per_trajectory: int = 32,
             n_trajectories_per_batch: int = 128,
             n_epochs: int = 4,
-            n_iterations: int = 300,
+            n_iterations: int = 200,
             learning_rate: float = 3e-4,
             discount: float = 0.99,
             clipping_param: float = 0.2,
@@ -131,16 +131,14 @@ class PPOLearner:
 
 
     @timer
-    def generate_batch(self) -> Tuple[List[np.ndarray], List[np.ndarray], List[float], List[float]]:
+    def generate_batch(
+            self,
+            pool: mp.Pool
+    ) -> Tuple[List[np.ndarray], List[np.ndarray], List[float], List[float]]:
 
         # Generate batch of trajectories
         if self.parallelize_batch_generation:
-            try:
-                pool = mp.Pool(mp.cpu_count())
-                trajectories = pool.starmap(self.generate_trajectory, [() for _ in range(self.n_trajectories_per_batch)])
-            except BlockingIOError:
-                logger.info("BlockingIOError: parallelized batch generation failed.")
-                trajectories = [self.generate_trajectory() for _ in range(self.n_trajectories_per_batch)]
+            trajectories = pool.starmap(self.generate_trajectory, [() for _ in range(self.n_trajectories_per_batch)])
         else:
             trajectories = [self.generate_trajectory() for _ in range(self.n_trajectories_per_batch)]
 
@@ -238,12 +236,14 @@ class PPOLearner:
     @timer
     def train(self) -> None:
 
+        pool = mp.Pool(mp.cpu_count())
+
         for i in range(self.n_iterations):
 
             logger.info(f"Iteration: {i + 1}")
 
             # Generate batch
-            states, actions, rewards, discounted_returns = self.generate_batch()
+            states, actions, rewards, discounted_returns = self.generate_batch(pool=pool)
 
             # Track performance
             self.mean_rewards.append(np.mean(rewards))

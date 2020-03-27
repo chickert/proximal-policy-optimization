@@ -114,7 +114,7 @@ def run_experiment(
 
         # Save learner outputs
         learner.save_training_rewards(path=training_rewards_path)
-        if n_dimensions == 2:
+        if (n_dimensions == 2) and trajectory_plots_path:
             save_trajectory_plots(
                 learner=learner,
                 path=f"{trajectory_plots_path}_seed_{seed}"
