@@ -9,7 +9,7 @@ from toy_environments.goal_finder import GoalFinderEnv
 logger = logging.basicConfig(level=logging.INFO)
 
 # Constants
-REWARD_NOISE_GRID = np.linspace(0.1, 1.0, 11)  # standard deviation of Gaussian noise added to reward function
+REWARD_NOISE_GRID = np.linspace(0, 1, 11)  # standard deviation of Gaussian noise added to reward function
 ACTOR_HIDDEN_LAYER_UNITS = [64, 32]
 CRITIC_HIDDEN_LAYER_UNITS = [32, 18]
 TRAINING_REWARDS_PATH = "../../results/goal_finder/training_rewards"
@@ -54,7 +54,7 @@ def save_trajectory_plots(
     )
     plt.legend(fontsize=14, loc="upper left")
     fig.savefig(path)
-    fig.close()
+    plt.close()
 
 
 def run_experiment(
