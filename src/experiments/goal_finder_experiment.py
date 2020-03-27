@@ -2,20 +2,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 import logging
 
+from typing import Optional
 from algorithm.ppo import PPOLearner
 from toy_environments.goal_finder import GoalFinderEnv
 
 logger = logging.basicConfig(level=logging.INFO)
 
 # Constants
-N_DIMENSIONS = 2
-SPARSITY_PARAM = 1.0  # scaling factor for Gaussian kernel reward function
-REWARD_NOISE = 0  # standard deviation of Gaussian noise added to reward function
-N_TRIALS = 1
+REWARD_NOISE_GRID = np.linspace(0, 0.8, 9)  # standard deviation of Gaussian noise added to reward function
 ACTOR_HIDDEN_LAYER_UNITS = [64, 32]
 CRITIC_HIDDEN_LAYER_UNITS = [32, 18]
-DISCRETE_STEP_SIZE = 5e-2
-DISCRETE_ACTOR = False
 TRAINING_REWARDS_PATH = "../../results/goal_finder/training_rewards"
 TRAJECTORY_PLOTS_PATH = "../../results/goal_finder/trajectory_plot"
 
@@ -48,7 +44,6 @@ def save_trajectory_plots(
         learner.environment.initial_state[1],
         marker="o",
         color="k",
-        s=50,
         label="initial state"
     )
     plt.scatter(
@@ -56,51 +51,62 @@ def save_trajectory_plots(
         learner.environment.goal_state[1],
         marker="o",
         color="tab:green",
-        s=50,
         label="goal state"
     )
     plt.legend(fontsize=14, loc="upper left")
     fig.savefig(path)
 
 
-def run_experiment() -> None:
+def run_experiment(
+        training_rewards_path: str,
+        trajectory_plots_path: Optional[str] = None,
+        n_dimensions: int = 2,
+        sparsity_param: float = 1.0,
+        reward_noise: float = 0.0,
+        n_trials: int = 5,
+        clipping_param: float = 0.2,
+        discrete_actor: bool = False,
+        discrete_step_size: float = 5e-2
+) -> None:
 
     # Initialize environment
     environment = GoalFinderEnv(
-        initial_state=np.zeros(N_DIMENSIONS),
-        goal_state=np.ones(N_DIMENSIONS),
-        sparsity_param=SPARSITY_PARAM,
-        reward_noise=REWARD_NOISE
+        initial_state=np.zeros(n_dimensions),
+        goal_state=np.ones(n_dimensions),
+        sparsity_param=sparsity_param,
+        reward_noise=reward_noise,
     )
 
-    for seed in range(N_TRIALS):
+    for seed in range(n_trials):
 
         # Initialize learner
-        if DISCRETE_ACTOR:
+        if discrete_actor:
             action_map = {
-                key: DISCRETE_STEP_SIZE * action for key, action in enumerate(
-                    [np.identity(N_DIMENSIONS)[i] for i in range(N_DIMENSIONS)]
-                    + [-np.identity(N_DIMENSIONS)[i] for i in range(N_DIMENSIONS)]
-                    + [np.zeros(N_DIMENSIONS)]
+                key: discrete_step_size * action for key, action in enumerate(
+                    [np.identity(n_dimensions)[i] for i in range(n_dimensions)]
+                    + [-np.identity(n_dimensions)[i] for i in range(n_dimensions)]
+                    + [np.zeros(n_dimensions)]
                 )
             }
             leaner = PPOLearner(
                 environment=environment,
-                state_space_dimension=N_DIMENSIONS,
+                state_space_dimension=n_dimensions,
                 action_space_dimension=len(action_map),
                 actor_hidden_layer_units=ACTOR_HIDDEN_LAYER_UNITS,
                 critic_hidden_layer_units=CRITIC_HIDDEN_LAYER_UNITS,
                 discrete_actor=True,
                 action_map=action_map,
+                clipping_param=clipping_param,
                 seed=seed
             )
         else:
             learner = PPOLearner(
                 environment=environment,
-                state_space_dimension=N_DIMENSIONS,
-                action_space_dimension=N_DIMENSIONS,
+                state_space_dimension=n_dimensions,
+                action_space_dimension=n_dimensions,
                 actor_hidden_layer_units=ACTOR_HIDDEN_LAYER_UNITS,
                 critic_hidden_layer_units=CRITIC_HIDDEN_LAYER_UNITS,
+                clipping_param=clipping_param,
                 seed=seed
             )
 
@@ -108,13 +114,20 @@ def run_experiment() -> None:
         learner.train()
 
         # Save learner outputs
-        learner.save_training_rewards(path=TRAINING_REWARDS_PATH)
-        if N_DIMENSIONS == 2:
+        learner.save_training_rewards(path=training_rewards_path)
+        if n_dimensions == 2:
             save_trajectory_plots(
                 learner=learner,
-                path=f"{TRAJECTORY_PLOTS_PATH}_{seed}"
+                path=f"{trajectory_plots_path}_seed_{seed}"
             )
 
 
 if __name__ == "__main__":
-    run_experiment()
+
+    for reward_noise_ in REWARD_NOISE_GRID:
+
+        run_experiment(
+            training_rewards_path=f"{TRAINING_REWARDS_PATH}_noise_{int(10 * reward_noise_)}",
+            trajectory_plots_path=f"{TRAJECTORY_PLOTS_PATH}_noise_{int(10 * reward_noise_)}",
+            reward_noise=reward_noise_
+        )

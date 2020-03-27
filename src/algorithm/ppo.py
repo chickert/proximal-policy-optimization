@@ -31,7 +31,7 @@ class PPOLearner:
             n_steps_per_trajectory: int = 32,
             n_trajectories_per_batch: int = 128,
             n_epochs: int = 4,
-            n_iterations: int = 250,
+            n_iterations: int = 300,
             learning_rate: float = 3e-4,
             discount: float = 0.99,
             clipping_param: float = 0.2,
@@ -84,9 +84,9 @@ class PPOLearner:
         # Set other attributes
         self.parallelize_batch_generation = parallelize_batch_generation
 
-    def calculate_discounted_returns(self, rewards: List[float]) -> List[float]:
+    def calculate_discounted_returns(self, states: List[np.ndarray], rewards: List[float]) -> List[float]:
         discounted_returns = []
-        discounted_return = 0
+        discounted_return = 0  # TODO: check if this is the correct terminal condition
         for t in reversed(range(self.n_steps_per_trajectory)):
             discounted_return = rewards[t] + self.discount * discounted_return
             discounted_returns.insert(0, discounted_return)
@@ -124,7 +124,7 @@ class PPOLearner:
         self.environment.reset()
 
         # Calculate discounted rewards
-        discounted_returns = self.calculate_discounted_returns(rewards=rewards)
+        discounted_returns = self.calculate_discounted_returns(states=states, rewards=rewards)
 
         # Return states (excluding terminal state), actions, rewards and discounted rewards
         return states[:-1], actions[:-1], rewards, discounted_returns
