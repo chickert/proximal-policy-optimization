@@ -22,15 +22,14 @@ def save_trajectory_plots(
         n_sample_trajectories: int = 3,
 ) -> None:
     fig = plt.figure(figsize=(10, 10))
-    for i in range(n_sample_trajectories):
-        states, _, _, _ = learner.generate_trajectory(use_argmax=False)
-        plt.plot(
-            [state[0] for state in states],
-            [state[1] for state in states],
-            color="tab:blue",
-            alpha=0.5,
-            label=f"sample trajectory {i+1}"
-        )
+    states, _, _, _ = learner.generate_trajectory(use_argmax=False)
+    plt.plot(
+        [state[0] for state in states],
+        [state[1] for state in states],
+        color="tab:blue",
+        alpha=0.5,
+        label=f"sample trajectory"
+    )
     states, _, _, _ = learner.generate_trajectory(use_argmax=True)
     plt.plot(
         [state[0] for state in states],
