@@ -274,7 +274,7 @@ class PPOLearner:
 
     def save_training_rewards(self, path: str) -> None:
         try:
-            df = pd.read_csv(f"{path}.csv")
+            df = pd.read_csv(f"{path}.csv", index_col=0)
             df[self.seed] = self.mean_rewards
         except FileNotFoundError:
             df = pd.DataFrame(self.mean_rewards, columns=[self.seed])
