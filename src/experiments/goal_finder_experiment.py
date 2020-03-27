@@ -9,7 +9,7 @@ from toy_environments.goal_finder import GoalFinderEnv
 logger = logging.basicConfig(level=logging.INFO)
 
 # Constants
-REWARD_NOISE_GRID = np.linspace(0.9, 1.0, 2)  # standard deviation of Gaussian noise added to reward function
+REWARD_NOISE_GRID = np.linspace(0.1, 1.0, 11)  # standard deviation of Gaussian noise added to reward function
 ACTOR_HIDDEN_LAYER_UNITS = [64, 32]
 CRITIC_HIDDEN_LAYER_UNITS = [32, 18]
 TRAINING_REWARDS_PATH = "../../results/goal_finder/training_rewards"
@@ -61,15 +61,18 @@ def run_experiment(
         training_rewards_path: str,
         trajectory_plots_path: Optional[str] = None,
         n_dimensions: int = 2,
-        sparsity_param: float = 1.0,
+        sparsity_param: float = 3.0,
         reward_noise: float = 0.0,
         n_trials: int = 5,
         clipping_param: float = 0.2,
         discrete_actor: bool = False,
-        discrete_step_size: float = 5e-2
+        discrete_step_size: float = 5e-2,
+        rescale_sparsity_param: bool = True
 ) -> None:
 
     # Initialize environment
+    if rescale_sparsity_param:
+        sparsity_param = sparsity_param / np.sqrt(n_dimensions)
     environment = GoalFinderEnv(
         initial_state=np.zeros(n_dimensions),
         goal_state=np.ones(n_dimensions),
