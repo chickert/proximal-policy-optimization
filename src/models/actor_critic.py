@@ -4,7 +4,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical, Normal
-
+# Set up device
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 class ActorCritic(nn.Module):
 
@@ -31,66 +32,70 @@ class ActorCritic(nn.Module):
 
         # Make actor network
         actor_layers = [
-            nn.Linear(state_space_dimension, actor_hidden_layer_units[0]),
-            non_linearity()
+            nn.Linear(state_space_dimension, actor_hidden_layer_units[0]).to(device),
+            non_linearity().to(device)
         ]
         for i in range(1, len(actor_hidden_layer_units)):
             actor_layers += [
-                nn.Linear(actor_hidden_layer_units[i - 1], actor_hidden_layer_units[i]),
-                non_linearity()
+                nn.Linear(actor_hidden_layer_units[i - 1], actor_hidden_layer_units[i]).to(device),
+                non_linearity().to(device)
             ]
         actor_layers += [
-            nn.Linear(actor_hidden_layer_units[-1], action_space_dimension),
+            nn.Linear(actor_hidden_layer_units[-1], action_space_dimension).to(device),
         ]
         if self.discrete_actor:
-            actor_layers += [nn.Softmax(dim=-1)]
+            actor_layers += [nn.Softmax(dim=-1).to(device)]
         self.actor = nn.Sequential(*actor_layers)
 
         # Make critic network
         critic_layers = [
-            nn.Linear(state_space_dimension, critic_hidden_layer_units[0]),
-            non_linearity()
+            nn.Linear(state_space_dimension, critic_hidden_layer_units[0]).to(device),
+            non_linearity().to(device)
         ]
         for i in range(1, len(critic_hidden_layer_units)):
             critic_layers += [
-                nn.Linear(critic_hidden_layer_units[i - 1], critic_hidden_layer_units[i]),
-                non_linearity()
+                nn.Linear(critic_hidden_layer_units[i - 1], critic_hidden_layer_units[i]).to(device),
+                non_linearity().to(device)
             ]
         critic_layers += [
-            nn.Linear(critic_hidden_layer_units[-1], 1)
+            nn.Linear(critic_hidden_layer_units[-1], 1).to(device)
         ]
-        self.critic = nn.Sequential(*critic_layers)
+        self.critic = nn.Sequential(*critic_layers).to(device)
 
     def get_distribution(self, states: torch.Tensor):
         if self.discrete_actor:
-            return Categorical(self.actor(states))
+            return Categorical(self.actor(states).to(device))
         else:
-            return Normal(loc=self.actor(states), scale=self.actor_std)
+            return Normal(loc=self.actor(states).to(device), scale=self.actor_std)
 
     def get_distribution_argmax(self, states: torch.Tensor):
         if self.discrete_actor:
-            return self.actor(states).argmax()
+            return self.actor(states).to(device).argmax()
         else:
-            return self.actor(states)
+            return self.actor(states).to(device)
 
     def forward(self, states: torch.Tensor, actions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         dist = self.get_distribution(states)
         log_probabilities = dist.log_prob(actions)
         entropy = dist.entropy()
-        values = self.critic(states)
+        values = self.critic(states).to(device)
         return log_probabilities, values, entropy
 
     def sample_action(self, state: np.ndarray) -> np.ndarray:
-        state = torch.tensor(state).float()
+        state = torch.tensor(state).float().to(device)
         action = self.get_distribution(state).sample()
+        if device == "cuda":
+            action = action.cpu()
         if self.discrete_actor:
             return self.action_map[action.item()]
         else:
             return action.detach().numpy()
 
     def get_argmax_action(self, state: np.ndarray) -> np.ndarray:
-        state = torch.tensor(state).float()
+        state = torch.tensor(state).float().to(device)
         action = self.get_distribution_argmax(state)
+        if device == "cuda":
+            action = action.cpu()
         if self.discrete_actor:
             return self.action_map[action.item()]
         else:

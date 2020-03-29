@@ -11,7 +11,7 @@ from models.environment import Environment
 from utils.misc import concatenate_lists, timer
 
 # Set up device
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -28,10 +28,10 @@ class PPOLearner:
             actor_hidden_layer_units: List[int],
             discrete_actor: bool = False,
             action_map: Optional[Dict[int, np.ndarray]] = None,
-            n_steps_per_trajectory: int = 32,
-            n_trajectories_per_batch: int = 128,
+            n_steps_per_trajectory: int = 16,
+            n_trajectories_per_batch: int = 64,
             n_epochs: int = 4,
-            n_iterations: int = 200,
+            n_iterations: int = 150,
             learning_rate: float = 3e-4,
             discount: float = 0.99,
             clipping_param: float = 0.2,
@@ -235,8 +235,7 @@ class PPOLearner:
 
     @timer
     def train(self) -> None:
-
-        pool = mp.Pool(mp.cpu_count())
+        pool = mp.Pool(8)
 
         for i in range(self.n_iterations):
 
@@ -271,6 +270,7 @@ class PPOLearner:
             logger.info(f"Mean reward: {self.mean_rewards[-1]}")
             logger.info(f"Mean discounted return: {self.mean_discounted_returns[-1]}")
             logger.info("-" * 50)
+        pool.close()
 
     def save_training_rewards(self, path: str) -> None:
         try:

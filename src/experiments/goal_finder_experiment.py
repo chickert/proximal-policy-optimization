@@ -9,7 +9,9 @@ from toy_environments.goal_finder import GoalFinderEnv
 logger = logging.basicConfig(level=logging.INFO)
 
 # Constants
-REWARD_NOISE_GRID = np.linspace(0, 1, 11)  # standard deviation of Gaussian noise added to reward function
+REWARD_NOISE_GRID = np.linspace(0.0, 1.0, 3)  # standard deviation of Gaussian noise added to reward function
+SPARSITY_GRID = np.linspace(1.0, 5.0, 3)  # controls the sparsity parameter
+CLIPPING_GRID = np.linspace(0.1, 0.3, 3) #Grid for the clipping parameter
 ACTOR_HIDDEN_LAYER_UNITS = [64, 32]
 CRITIC_HIDDEN_LAYER_UNITS = [32, 18]
 TRAINING_REWARDS_PATH = "../../results/goal_finder/training_rewards"
@@ -54,6 +56,7 @@ def save_trajectory_plots(
     )
     plt.legend(fontsize=14, loc="upper left")
     fig.savefig(path)
+
     plt.close()
 
 
@@ -63,7 +66,7 @@ def run_experiment(
         n_dimensions: int = 2,
         sparsity_param: float = 3.0,
         reward_noise: float = 0.0,
-        n_trials: int = 5,
+        n_trials: int = 3,
         clipping_param: float = 0.2,
         discrete_actor: bool = False,
         discrete_step_size: float = 5e-2,
@@ -91,7 +94,7 @@ def run_experiment(
                     + [np.zeros(n_dimensions)]
                 )
             }
-            leaner = PPOLearner(
+            learner = PPOLearner(
                 environment=environment,
                 state_space_dimension=n_dimensions,
                 action_space_dimension=len(action_map),
@@ -121,16 +124,21 @@ def run_experiment(
         if (n_dimensions == 2) and trajectory_plots_path:
             save_trajectory_plots(
                 learner=learner,
-                path=f"{trajectory_plots_path}_seed_{seed}"
+                path=f"{trajectory_plots_path}_seed_{seed}.png"
             )
 
 
 if __name__ == "__main__":
-
+    reward_noise_ = 0.5
+    clipping_ = 0.1
     for reward_noise_ in REWARD_NOISE_GRID:
-
-        run_experiment(
-            training_rewards_path=f"{TRAINING_REWARDS_PATH}_noise_{int(100 * reward_noise_)}",
-            trajectory_plots_path=f"{TRAJECTORY_PLOTS_PATH}_noise_{int(100 * reward_noise_)}",
-            reward_noise=reward_noise_
-        )
+        for sparsity_ in SPARSITY_GRID:
+            for clipping_ in CLIPPING_GRID:
+                print(f"Starting Training with Reward Noise: {reward_noise_},  Sparsity: {sparsity_},  Clipping Parameter: {clipping_}")
+                run_experiment(
+                    training_rewards_path=f"{TRAINING_REWARDS_PATH}/noise_{int(100 * reward_noise_)}_sparsity_{sparsity_}_clipping_{clipping_}",
+                    trajectory_plots_path=f"{TRAJECTORY_PLOTS_PATH}/noise_{int(100 * reward_noise_)}_sparsity_{sparsity_}_clipping_{clipping_}",
+                    reward_noise=reward_noise_,
+                    clipping_param= clipping_,
+                    sparsity_param= sparsity_
+                )
