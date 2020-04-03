@@ -7,7 +7,7 @@ class Environment:
 
     def __init__(
             self,
-            initial_state: np.ndarray,
+            initial_state,
             transition_function: Callable,
             reward_function: Callable,
             is_done: Optional[Callable] = None
@@ -21,7 +21,7 @@ class Environment:
         else:
             self.is_done = lambda state: False
 
-    def update(self, action: np.ndarray) -> Tuple[float, bool]:
+    def update(self, action) -> Tuple[float, bool]:
         self.state = self.transition_function(state=self.state, action=action)
         done = self.is_done(self.state)
         reward = self.reward_function(state=self.state, action=action)

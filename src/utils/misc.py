@@ -1,8 +1,8 @@
 import logging
 from functools import wraps
-from itertools import chain
+from itertools import chain, product
 from time import time
-from typing import List, Iterable, Any
+from typing import List, Iterable, Any, Dict
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -16,10 +16,13 @@ def timer(f):
         result = f(*args, **kwargs)
         logger.info("Run time for %s: %.2fs", f.__name__, time() - start)
         return result
-
     return wrapper
 
 
 # Nice pattern for concatenating lists
 def concatenate_lists(lists: Iterable[List[Any]]) -> List[Any]:
     return list(chain(*lists))
+
+
+def combine_grids(grids: List[Iterable[Any]], keys: Iterable[str]) -> List[Dict[str, Any]]:
+    return [dict(zip(keys, perm)) for perm in product(*grids)]

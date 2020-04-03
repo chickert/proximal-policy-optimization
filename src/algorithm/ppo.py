@@ -6,12 +6,10 @@ import pandas as pd
 import torch
 import pathos.multiprocessing as mp
 
-from models.actor_critic import ActorCritic
+from models.actor_critic import ActorCritic, DEVICE
 from models.environment import Environment
 from utils.misc import concatenate_lists, timer
 
-# Set up device
-device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -22,16 +20,13 @@ class PPOLearner:
     def __init__(
             self,
             environment: Environment,
-            state_space_dimension: int,
-            action_space_dimension: int,
             critic_hidden_layer_units: List[int],
             actor_hidden_layer_units: List[int],
-            discrete_actor: bool = False,
             action_map: Optional[Dict[int, np.ndarray]] = None,
-            n_steps_per_trajectory: int = 16,
+            n_steps_per_trajectory: int = 32,
             n_trajectories_per_batch: int = 64,
-            n_epochs: int = 4,
-            n_iterations: int = 150,
+            n_epochs: int = 10,
+            n_iterations: int = 200,
             learning_rate: float = 3e-4,
             discount: float = 0.99,
             clipping_param: float = 0.2,
@@ -40,7 +35,6 @@ class PPOLearner:
             entropy_decay: float = 1.0,
             actor_std: float = 0.05,
             actor_std_decay: float = 0.999,
-            parallelize_batch_generation: bool = True,
             seed: int = 0
     ):
         # Set seed
@@ -52,12 +46,16 @@ class PPOLearner:
         self.environment = environment
 
         # Initialize actor-critic policy network
+        state_space_dimension = len(self.environment.state)
+        if action_map:
+            action_space_dimension = len(action_map)
+        else:
+            action_space_dimension = state_space_dimension
         self.policy = ActorCritic(
             state_space_dimension=state_space_dimension,
             action_space_dimension=action_space_dimension,
             actor_hidden_layer_units=actor_hidden_layer_units,
             critic_hidden_layer_units=critic_hidden_layer_units,
-            discrete_actor=discrete_actor,
             action_map=action_map,
             actor_std=actor_std
         )
@@ -80,9 +78,6 @@ class PPOLearner:
         # Initialize attributes for performance tracking
         self.mean_rewards = []
         self.mean_discounted_returns = []
-
-        # Set other attributes
-        self.parallelize_batch_generation = parallelize_batch_generation
 
     def calculate_discounted_returns(self, rewards: List[float]) -> List[float]:
         discounted_returns = []
@@ -133,14 +128,14 @@ class PPOLearner:
     @timer
     def generate_batch(
             self,
-            pool: mp.Pool
+            pool: Optional[mp.Pool]
     ) -> Tuple[List[np.ndarray], List[np.ndarray], List[float], List[float]]:
 
         # Generate batch of trajectories
-        if self.parallelize_batch_generation:
-            trajectories = pool.starmap(self.generate_trajectory, [() for _ in range(self.n_trajectories_per_batch)])
-        else:
+        if pool is None:
             trajectories = [self.generate_trajectory() for _ in range(self.n_trajectories_per_batch)]
+        else:
+            trajectories = pool.starmap(self.generate_trajectory, [() for _ in range(self.n_trajectories_per_batch)])
 
         # Unzip and return trajectories
         states, actions, rewards, discounted_returns = map(concatenate_lists, zip(*trajectories))
@@ -154,12 +149,12 @@ class PPOLearner:
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 
         # Convert data to tensors
-        states = torch.tensor(states).float().to(device).detach()
-        if self.policy.discrete_actor:
+        states = torch.tensor(states).float().to(DEVICE).detach()
+        if self.policy.actor_is_discrete:
             actions = [self.policy.inverse_action_map[tuple(action)] for action in actions]
-        actions = torch.tensor(actions).float().to(device).detach()
-        discounted_returns = torch.tensor(discounted_returns).float().unsqueeze(1).to(device).detach()
-        old_log_probabilities = self.policy.get_distribution(states).log_prob(actions).float().to(device).detach()
+        actions = torch.tensor(actions).float().to(DEVICE).detach()
+        discounted_returns = torch.tensor(discounted_returns).float().unsqueeze(1).to(DEVICE).detach()
+        old_log_probabilities = self.policy.get_distribution(states).log_prob(actions).float().to(DEVICE).detach()
 
         # Normalize discounted rewards
         discounted_returns = (discounted_returns - torch.mean(discounted_returns)) / (
@@ -228,14 +223,13 @@ class PPOLearner:
         self.entropy_coefficient = self.entropy_decay * self.entropy_coefficient
 
         # Decay actor standard deviation
-        if not self.policy.discrete_actor:
+        if not self.policy.actor_is_discrete:
             self.policy.actor_std = self.actor_std_decay * self.policy.actor_std
 
         # Do other stuff in the future
 
     @timer
-    def train(self) -> None:
-        pool = mp.Pool(8)
+    def train(self, pool: mp.Pool) -> None:
 
         for i in range(self.n_iterations):
 
@@ -270,7 +264,6 @@ class PPOLearner:
             logger.info(f"Mean reward: {self.mean_rewards[-1]}")
             logger.info(f"Mean discounted return: {self.mean_discounted_returns[-1]}")
             logger.info("-" * 50)
-        pool.close()
 
     def save_training_rewards(self, path: str) -> None:
         try:
