@@ -11,8 +11,8 @@ def generate_maze(
         pct_blocked: float,
 ) -> np.ndarray:
     is_blocked = np.random.binomial(1, pct_blocked, (maze_size, maze_size))
-    is_blocked[initial_state[0], initial_state[1]] = 0
-    is_blocked[goal_state[0], goal_state[1]] = 0
+    is_blocked[int(initial_state[0]), int(initial_state[1])] = 0
+    is_blocked[int(goal_state[0]), int(goal_state[1])] = 0
     return is_blocked
 
 
@@ -50,6 +50,7 @@ class BlockMazeEnv(Environment):
         # Rescale sparsity param if desired
         if rescale_sparsity_param:
             sparsity_param = sparsity_param / np.sqrt(np.linalg.norm(initial_state - goal_state, 2))
+            print(sparsity_param)
 
         def transition_function(
                 state: np.ndarray,
@@ -57,7 +58,7 @@ class BlockMazeEnv(Environment):
         ) -> np.ndarray:
             x = max(min(state[0] + action[0], maze_size - 1), 0)
             y = max(min(state[1] + action[1], maze_size - 1), 0)
-            if is_blocked[x, y]:
+            if is_blocked[int(x), int(y)]:
                 return state
             else:
                 return np.array([x, y])
@@ -70,7 +71,7 @@ class BlockMazeEnv(Environment):
             return np.exp(-sparsity_param * distance_to_goal ** 2) + reward_noise*noise_sample()
 
         def is_done(state: np.ndarray) -> bool:
-            if state == goal_state:
+            if np.isclose(state, goal_state).all():
                 return True
             else:
                 return False

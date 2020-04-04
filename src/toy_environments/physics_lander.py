@@ -25,7 +25,7 @@ class PhysicsLanderEnv(Environment):
         if rescale_sparsity_param:
             sparsity_param = sparsity_param / np.linalg.norm(initial_position - goal_position, 2)
 
-        if force in None:
+        if force is None:
             def force(position: np.ndarray) -> np.ndarray:
                 return np.zeros(n_dimensions)
 
@@ -56,3 +56,9 @@ class PhysicsLanderEnv(Environment):
 
         np.random.seed(seed)
         self.goal_position = goal_position
+
+
+def constant_force(direction: np.ndarray) -> Callable:
+    def force(position: np.ndarray) -> np.ndarray:
+        return direction
+    return force

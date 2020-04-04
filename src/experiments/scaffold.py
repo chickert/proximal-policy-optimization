@@ -17,7 +17,7 @@ def run_experiment(
         training_rewards_path: str,
         pool: Optional[Pool] = None,
         n_trials: int = 5,
-        hyperparams: Optional[Dict[str, Any]] = None,
+        ppo_params: Optional[Dict[str, Any]] = None,
         action_map: Optional[Dict[int, np.ndarray]] = None
 ) -> None:
 
@@ -27,16 +27,15 @@ def run_experiment(
         if action_map:
             learner = PPOLearner(
                 environment=environment,
-                discrete_actor=True,
                 action_map=action_map,
                 seed=seed,
-                **hyperparams
+                **ppo_params
             )
         else:
             learner = PPOLearner(
                 environment=environment,
                 seed=seed,
-                **hyperparams
+                **ppo_params
             )
 
         # Train learner
@@ -51,38 +50,34 @@ class ParamGrid:
     def __init__(
             self,
             param_name: str,
-            grid: Iterable,
-            is_environment_param: bool = False,
+            grid: Iterable
     ):
         self.param_name = param_name
         self.grid = grid
-        self.is_environment_param = is_environment_param
 
 
 def make_experiment_id(
         environment_params: Dict[str, Any],
-        hyperparams: Dict[str, Any],
+        ppo_params: Dict[str, Any],
 ) -> str:
     param_strings = []
-    for params in (environment_params, hyperparams):
+    for params in (environment_params, ppo_params):
         for key, value in params.items():
             if type(value) is float:
                 param_strings.append(f"{key}_{'{0:.2f}'.format(value)}".replace(".", "-"))
-            elif type(value) is int:
-                param_strings.append(f"{key}_{value}")
             elif callable(value):
                 param_strings.append(f"{key}_{value.__name__}")
             else:
-                print(key, value)
-                raise NotImplemented
+                param_strings.append(f"{key}_{value}")
     return "_".join(param_strings)
 
 
 def run_batch(
         folder_path: str,
         environment_type: Type[Environment],
-        param_grids: List[ParamGrid],
-        default_hyperparams: Optional[Dict[str, Any]] = None,
+        environment_param_grids: List[ParamGrid],
+        ppo_param_grids: List[ParamGrid],
+        fixed_ppo_params: Optional[Dict[str, Any]] = None,
         n_trials: int = 5,
         n_cores: Optional[int] = None,
         action_map: Optional[Dict[int, np.ndarray]] = None
@@ -95,23 +90,23 @@ def run_batch(
 
     # Run experiment for all environment parameter and hyper parameter combinations
     for environment_params in combine_grids(
-        *zip(*[(grid.grid, grid.param_name) for grid in param_grids if grid.is_environment_param])
+        *zip(*[(grid.grid, grid.param_name) for grid in environment_param_grids])
     ):
         environment = environment_type(**environment_params)
-        for hyperparams in combine_grids(
-            *zip(*[(grid.grid, grid.param_name) for grid in param_grids if not grid.is_environment_param])
+        for ppo_params in combine_grids(
+            *zip(*[(grid.grid, grid.param_name) for grid in ppo_param_grids])
         ):
             experiment_id = make_experiment_id(
                 environment_params=environment_params,
-                hyperparams=hyperparams
+                ppo_params=ppo_params
             )
-            if default_hyperparams:
-                hyperparams = dict(**hyperparams, **default_hyperparams)
+            if fixed_ppo_params:
+                ppo_params = dict(**ppo_params, **fixed_ppo_params)
             run_experiment(
                 environment=environment,
                 training_rewards_path=f"{folder_path}{experiment_id}",
                 pool=pool,
-                hyperparams=hyperparams,
+                ppo_params=ppo_params,
                 action_map=action_map,
                 n_trials=n_trials
             )

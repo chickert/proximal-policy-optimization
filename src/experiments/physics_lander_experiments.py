@@ -2,7 +2,7 @@ import numpy as np
 import logging
 
 from algorithm.annealing import AnnealedParam
-from toy_environments.goal_finder import GoalFinderEnv
+from toy_environments.physics_lander import PhysicsLanderEnv, constant_force
 from experiments.scaffold import run_batch, ParamGrid
 from experiments.noise import normal, uniform, adversarial, rescale_noise
 
@@ -10,15 +10,15 @@ from experiments.noise import normal, uniform, adversarial, rescale_noise
 logger = logging.basicConfig(level=logging.DEBUG)
 
 # Set experiment batch parameters
-PATH = "../../results/goal_finder/"
+PATH = "../../results/physics_lander/"
 N_CORES = 4
 N_TRIALS = 5
 
 # Set environment parameter grids
 ENVIRONMENT_PARAM_GRIDS = [
     ParamGrid(
-        param_name="n_dimensions",
-        grid=[2, 3, 4],
+        param_name="force",
+        grid=[None,  constant_force(np.array([0, -1]))],
     ),
     ParamGrid(
         param_name="sparsity_param",
@@ -52,11 +52,12 @@ PPO_PARAM_GRIDS = [
 
 # Set fixed PPO parameters
 FIXED_PPO_PARAMS = {
+    "action_space_dimension": 2,
     "actor_hidden_layer_units": [64, 32],
     "critic_hidden_layer_units": [32, 18],
     "n_steps_per_trajectory": 32,
     "n_trajectories_per_batch": 64,
-    "n_iterations": 200,
+    "n_iterations": 10,
     "learning_rate": AnnealedParam(
         param_min=1e-4,
         param_max=5e-4,
@@ -69,7 +70,7 @@ FIXED_PPO_PARAMS = {
 if __name__ == "__main__":
     run_batch(
         folder_path=PATH,
-        environment_type=GoalFinderEnv,
+        environment_type=PhysicsLanderEnv,
         n_cores=N_CORES,
         n_trials=N_TRIALS,
         environment_param_grids=ENVIRONMENT_PARAM_GRIDS,

@@ -4,6 +4,8 @@ from itertools import chain, product
 from time import time
 from typing import List, Iterable, Any, Dict
 
+import numpy as np
+
 # Set up logger
 logger = logging.getLogger(__name__)
 
@@ -26,3 +28,7 @@ def concatenate_lists(lists: Iterable[List[Any]]) -> List[Any]:
 
 def combine_grids(grids: List[Iterable[Any]], keys: Iterable[str]) -> List[Dict[str, Any]]:
     return [dict(zip(keys, perm)) for perm in product(*grids)]
+
+
+def logit(x: float) -> float:
+    return np.log(x / (1 - x))

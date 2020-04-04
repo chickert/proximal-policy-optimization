@@ -1,9 +1,11 @@
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, List, Dict, Optional, Union
 
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical, Normal
+
+from algorithm.annealing import AnnealedParam
 
 # Set up device
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -18,7 +20,7 @@ class ActorCritic(nn.Module):
             actor_hidden_layer_units: List[int],
             critic_hidden_layer_units: List[int],
             action_map: Optional[Dict[int, np.ndarray]],
-            actor_std: float,
+            actor_std: Union[float, AnnealedParam],
             non_linearity: nn.Module = nn.ReLU,
     ):
         super(ActorCritic, self).__init__()
@@ -30,7 +32,7 @@ class ActorCritic(nn.Module):
             self.inverse_action_map = {tuple(action): key for key, action in action_map.items()}
         else:
             self.actor_is_discrete = False
-            self.actor_std = actor_std
+        self.actor_std = actor_std
 
         # Make actor network
         actor_layers = [

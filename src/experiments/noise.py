@@ -21,5 +21,6 @@ def rescale_noise(
 ) -> Callable:
     def rescaled_noise() -> float:
         return noise() * scaling_factor
+    rescaled_noise.__name__ = noise.__name__
     return rescaled_noise
 

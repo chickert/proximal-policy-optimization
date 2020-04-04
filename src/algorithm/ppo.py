@@ -1,14 +1,15 @@
 import logging
-from typing import Tuple, List, Optional, Dict
+from typing import Tuple, List, Optional, Dict, Union
 
 import numpy as np
 import pandas as pd
 import torch
 import pathos.multiprocessing as mp
 
+from algorithm.annealing import AnnealedParam
 from models.actor_critic import ActorCritic, DEVICE
 from models.environment import Environment
-from utils.misc import concatenate_lists, timer
+from utils.misc import concatenate_lists, timer, logit
 
 
 # Set up logging
@@ -22,19 +23,19 @@ class PPOLearner:
             environment: Environment,
             critic_hidden_layer_units: List[int],
             actor_hidden_layer_units: List[int],
+            action_space_dimension: Optional[int] = None,
             action_map: Optional[Dict[int, np.ndarray]] = None,
             n_steps_per_trajectory: int = 32,
             n_trajectories_per_batch: int = 64,
             n_epochs: int = 10,
             n_iterations: int = 200,
-            learning_rate: float = 3e-4,
             discount: float = 0.99,
-            clipping_param: float = 0.2,
-            critic_coefficient: float = 1.0,
-            entropy_coefficient: float = 0.01,
-            entropy_decay: float = 1.0,
+            learning_rate: Union[float, AnnealedParam] = 3e-4,
+            clipping_param: Union[float, AnnealedParam] = 0.2,
+            critic_coefficient: Union[float, AnnealedParam] = 1.0,
+            entropy_coefficient: Union[float, AnnealedParam] = 0.01,
             actor_std: float = 0.05,
-            actor_std_decay: float = 0.999,
+            clipping_type: str = "clamp",
             seed: int = 0
     ):
         # Set seed
@@ -47,10 +48,11 @@ class PPOLearner:
 
         # Initialize actor-critic policy network
         state_space_dimension = len(self.environment.state)
-        if action_map:
-            action_space_dimension = len(action_map)
-        else:
-            action_space_dimension = state_space_dimension
+        if action_space_dimension is None:
+            if action_map:
+                action_space_dimension = len(action_map)
+            else:
+                action_space_dimension = state_space_dimension
         self.policy = ActorCritic(
             state_space_dimension=state_space_dimension,
             action_space_dimension=action_space_dimension,
@@ -60,20 +62,20 @@ class PPOLearner:
             actor_std=actor_std
         )
 
-        # Initialize optimizer
-        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=learning_rate)
-
         # Set hyper-parameter attributes
         self.n_steps_per_trajectory = n_steps_per_trajectory
         self.n_trajectories_per_batch = n_trajectories_per_batch
         self.n_epochs = n_epochs
         self.n_iterations = n_iterations
         self.discount = discount
+        self.learning_rate = learning_rate
         self.clipping_param = clipping_param
         self.critic_coefficient = critic_coefficient
         self.entropy_coefficient = entropy_coefficient
-        self.entropy_decay = entropy_decay
-        self.actor_std_decay = actor_std_decay
+        self.clipping_type = clipping_type
+
+        # Initialize optimizer
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=float(self.learning_rate))
 
         # Initialize attributes for performance tracking
         self.mean_rewards = []
@@ -172,9 +174,21 @@ class PPOLearner:
             advantage_estimates: torch.Tensor,
     ) -> torch.Tensor:
         ratio = torch.exp(log_probabilities - old_log_probabilities)
+        if self.clipping_type == "clamp":
+            clipped_ratio = torch.clamp(ratio, 1 - self.clipping_param, 1 + self.clipping_param)
+        elif self.clipping_type == "sigmoid":
+            k = -logit(1/2 - self.clipping_param) / self.clipping_param
+            clipped_ratio = torch.sigmoid(k * (ratio - 1)) + 0.5
+        elif self.clipping_type == "tanh":
+            k = np.arctanh(self.clipping_param) / self.clipping_param
+            clipped_ratio = torch.tanh(k * (ratio - 1)) + 1
+        elif self.clipping_type == "none":
+            clipped_ratio = ratio
+        else:
+            raise NotImplementedError
         actor_loss = -torch.mean(
             torch.min(
-                torch.clamp(ratio, 1 - self.clipping_param, 1 + self.clipping_param) * advantage_estimates,
+                clipped_ratio * advantage_estimates,
                 ratio * advantage_estimates
             )
         )
@@ -217,16 +231,21 @@ class PPOLearner:
             loss.backward()
             self.optimizer.step()
 
-    def update_hyperparameters(self) -> None:
+    def update_parameters(self) -> None:
 
-        # Decay entropy coefficient
-        self.entropy_coefficient = self.entropy_decay * self.entropy_coefficient
+        if type(self.learning_rate) == AnnealedParam:
+            self.learning_rate = self.learning_rate.update()
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = float(self.learning_rate)
 
-        # Decay actor standard deviation
-        if not self.policy.actor_is_discrete:
-            self.policy.actor_std = self.actor_std_decay * self.policy.actor_std
+        if type(self.clipping_param) == AnnealedParam:
+            self.clipping_param = self.clipping_param.update()
 
-        # Do other stuff in the future
+        if type(self.entropy_coefficient) == AnnealedParam:
+            self.entropy_coefficient = self.entropy_coefficient.update()
+
+        if type(self.policy.actor_std) == AnnealedParam:
+            self.policy.actor_std = self.policy.actor_std.update()
 
     @timer
     def train(self, pool: mp.Pool) -> None:
@@ -234,6 +253,9 @@ class PPOLearner:
         for i in range(self.n_iterations):
 
             logger.info(f"Iteration: {i + 1}")
+
+            # Update PPO parameters
+            self.update_parameters()
 
             # Generate batch
             states, actions, rewards, discounted_returns = self.generate_batch(pool=pool)
@@ -256,9 +278,6 @@ class PPOLearner:
                 discounted_returns=discounted_returns,
                 old_log_probabilities=old_log_probabilities
             )
-
-            # Update hyper-parameters
-            self.update_hyperparameters()
 
             # Log performance
             logger.info(f"Mean reward: {self.mean_rewards[-1]}")
