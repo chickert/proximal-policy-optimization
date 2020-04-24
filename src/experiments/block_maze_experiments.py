@@ -56,15 +56,15 @@ PPO_PARAM_GRIDS = [
 
 # Set fixed PPO parameters
 FIXED_PPO_PARAMS = {
-    "action_space_dimension": 2,
+    "action_space_dimension": 4,
     "actor_hidden_layer_units": [64, 32],
     "critic_hidden_layer_units": [32, 18],
     "n_steps_per_trajectory": 32,
-    "n_trajectories_per_batch": 64,
-    "n_iterations": 10,
+    "n_trajectories_per_batch": 128,
+    "n_iterations": 100,
     "learning_rate": AnnealedParam(
         param_min=1e-4,
-        param_max=5e-4,
+        param_max=2e-4,
         period=20,
         schedule_type="linear",
     ),

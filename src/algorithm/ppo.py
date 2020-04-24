@@ -11,7 +11,6 @@ from models.actor_critic import ActorCritic, DEVICE
 from models.environment import Environment
 from utils.misc import concatenate_lists, timer, logit
 
-
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -33,7 +32,7 @@ class PPOLearner:
             learning_rate: Union[float, AnnealedParam] = 3e-4,
             clipping_param: Union[float, AnnealedParam] = 0.2,
             critic_coefficient: Union[float, AnnealedParam] = 1.0,
-            entropy_coefficient: Union[float, AnnealedParam] = 0.01,
+            entropy_coefficient: Union[float, AnnealedParam] = 0.001,
             actor_std: float = 0.05,
             clipping_type: str = "clamp",
             seed: int = 0
@@ -84,7 +83,7 @@ class PPOLearner:
     def calculate_discounted_returns(self, rewards: List[float]) -> List[float]:
         discounted_returns = []
         discounted_return = 0  # TODO: check if this is the correct terminal condition
-        for t in reversed(range(self.n_steps_per_trajectory)):
+        for t in reversed(range(len(rewards) - 1)):
             discounted_return = rewards[t] + self.discount*discounted_return
             discounted_returns.insert(0, discounted_return)
         return discounted_returns
@@ -177,11 +176,11 @@ class PPOLearner:
         if self.clipping_type == "clamp":
             clipped_ratio = torch.clamp(ratio, 1 - self.clipping_param, 1 + self.clipping_param)
         elif self.clipping_type == "sigmoid":
-            k = -logit(1/2 - self.clipping_param) / self.clipping_param
-            clipped_ratio = torch.sigmoid(k * (ratio - 1)) + 0.5
+            const = -logit(1/2 - self.clipping_param) / self.clipping_param
+            clipped_ratio = torch.sigmoid(const * (ratio - 1)) + 0.5
         elif self.clipping_type == "tanh":
-            k = np.arctanh(self.clipping_param) / self.clipping_param
-            clipped_ratio = torch.tanh(k * (ratio - 1)) + 1
+            const = np.arctanh(self.clipping_param) / self.clipping_param
+            clipped_ratio = torch.tanh(const * (ratio - 1)) + 1
         elif self.clipping_type == "none":
             clipped_ratio = ratio
         else:

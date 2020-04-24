@@ -12,7 +12,7 @@ class PhysicsLanderEnv(Environment):
             initial_position: np.ndarray = np.ones(2),
             goal_position: np.ndarray = np.zeros(2),
             sparsity_param: float = 1.0,
-            penalty: float = 1e-1,
+            penalty: float = 0.0,
             reward_noise: float = 0.0,
             noise_sample: Callable = np.random.randn,
             force: Optional[Callable[[np.ndarray], np.ndarray]] = None,

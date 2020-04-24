@@ -51,7 +51,7 @@ class AnnealedParam(float):
             cycle_pct = (1 + np.cost(np.pi * self.iteration / self.period)) / 2
             return self.param_min + (self.param_max - self.param_min) * cycle_pct
         else:
-            raise NotImplemented
+            raise NotImplementedError
 
     def update(self) -> float:
         new_param_value = self.calculate_param_from_schedule()

@@ -50,7 +50,6 @@ class BlockMazeEnv(Environment):
         # Rescale sparsity param if desired
         if rescale_sparsity_param:
             sparsity_param = sparsity_param / np.sqrt(np.linalg.norm(initial_state - goal_state, 2))
-            print(sparsity_param)
 
         def transition_function(
                 state: np.ndarray,

@@ -47,16 +47,16 @@ PPO_PARAM_GRIDS = [
     ParamGrid(
         param_name="clipping_type",
         grid=["clamp", "sigmoid", "tanh"]
-    ),
+    )
 ]
 
 # Set fixed PPO parameters
 FIXED_PPO_PARAMS = {
     "actor_hidden_layer_units": [64, 32],
     "critic_hidden_layer_units": [32, 18],
-    "n_steps_per_trajectory": 32,
-    "n_trajectories_per_batch": 64,
-    "n_iterations": 200,
+    "n_steps_per_trajectory": 16,
+    "n_trajectories_per_batch": 32,
+    "n_iterations": 100,
     "learning_rate": AnnealedParam(
         param_min=1e-4,
         param_max=5e-4,

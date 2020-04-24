@@ -18,15 +18,15 @@ N_TRIALS = 5
 ENVIRONMENT_PARAM_GRIDS = [
     ParamGrid(
         param_name="force",
-        grid=[None,  constant_force(np.array([0, -1]))],
+        grid=[None, constant_force(np.array([0, 1e-1]))],
     ),
     ParamGrid(
         param_name="sparsity_param",
-        grid=[2, 4, 8, 16],
+        grid=[2, 4, 8],
     ),
     ParamGrid(
         param_name="reward_noise",
-        grid=[0.0, 0.25, 0.5, 0.75, 1.0],
+        grid=[0.0, 0.25, 0.5],
     ),
     ParamGrid(
         param_name="noise_sample",
@@ -57,7 +57,7 @@ FIXED_PPO_PARAMS = {
     "critic_hidden_layer_units": [32, 18],
     "n_steps_per_trajectory": 32,
     "n_trajectories_per_batch": 64,
-    "n_iterations": 10,
+    "n_iterations": 100,
     "learning_rate": AnnealedParam(
         param_min=1e-4,
         param_max=5e-4,
