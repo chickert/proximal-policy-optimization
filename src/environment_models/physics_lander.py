@@ -1,11 +1,11 @@
 import numpy as np
 
-from models.environment import Environment
+from environment_models.base import BaseEnv
 
 from typing import Callable, Optional
 
 
-class PhysicsLanderEnv(Environment):
+class PhysicsLanderEnv(BaseEnv):
 
     def __init__(
             self,
@@ -47,7 +47,7 @@ class PhysicsLanderEnv(Environment):
             cost = np.linalg.norm(action, 2)
             return np.exp(-sparsity_param*distance_to_goal**2 - penalty*cost**2) + reward_noise*noise_sample()
 
-        Environment.__init__(
+        BaseEnv.__init__(
             self,
             initial_state=initial_state,
             transition_function=transition_function,
@@ -61,4 +61,5 @@ class PhysicsLanderEnv(Environment):
 def constant_force(direction: np.ndarray) -> Callable:
     def force(position: np.ndarray) -> np.ndarray:
         return direction
+    force.__name__ = "constant_force"
     return force

@@ -1,15 +1,19 @@
 import logging
-from typing import Tuple, List, Optional, Dict, Union
+from itertools import chain
+from typing import Tuple, List, Optional, Dict, Union, Iterable, Any
 
 import numpy as np
 import pandas as pd
-import torch
 import pathos.multiprocessing as mp
+import torch
+import torch.nn as nn
+from torch.utils.data import TensorDataset
 
-from algorithm.annealing import AnnealedParam
-from models.actor_critic import ActorCritic, DEVICE
-from models.environment import Environment
-from utils.misc import concatenate_lists, timer, logit
+from environment_models.base import BaseEnv
+from architectures.actor_critic import ActorCritic, DEVICE
+from algorithms.param_annealing import AnnealedParam
+from algorithms.behavior_cloning import BCLearner
+from algorithms.timer import timer
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -19,11 +23,12 @@ class PPOLearner:
 
     def __init__(
             self,
-            environment: Environment,
+            environment: BaseEnv,
             critic_hidden_layer_units: List[int],
             actor_hidden_layer_units: List[int],
             action_space_dimension: Optional[int] = None,
             action_map: Optional[Dict[int, np.ndarray]] = None,
+            activation: nn.Module = nn.SELU,
             n_steps_per_trajectory: int = 32,
             n_trajectories_per_batch: int = 64,
             n_epochs: int = 10,
@@ -32,8 +37,8 @@ class PPOLearner:
             learning_rate: Union[float, AnnealedParam] = 3e-4,
             clipping_param: Union[float, AnnealedParam] = 0.2,
             critic_coefficient: Union[float, AnnealedParam] = 1.0,
-            entropy_coefficient: Union[float, AnnealedParam] = 0.001,
-            actor_std: float = 0.05,
+            entropy_coefficient: Union[float, AnnealedParam] = 1e-2,
+            actor_std: Union[float, AnnealedParam] = 0.05,
             clipping_type: str = "clamp",
             seed: int = 0
     ):
@@ -58,7 +63,8 @@ class PPOLearner:
             actor_hidden_layer_units=actor_hidden_layer_units,
             critic_hidden_layer_units=critic_hidden_layer_units,
             action_map=action_map,
-            actor_std=actor_std
+            actor_std=actor_std,
+            activation=activation
         )
 
         # Set hyper-parameter attributes
@@ -124,7 +130,6 @@ class PPOLearner:
 
         # Return states (excluding terminal state), actions, rewards and discounted rewards
         return states[:-1], actions[:-1], rewards, discounted_returns
-
 
     @timer
     def generate_batch(
@@ -201,7 +206,8 @@ class PPOLearner:
             states: torch.Tensor,
             actions: torch.Tensor,
             discounted_returns: torch.Tensor,
-            old_log_probabilities: torch.Tensor
+            old_log_probabilities: torch.Tensor,
+            train_critic_only: bool = False
     ) -> None:
 
         for _ in range(self.n_epochs):
@@ -212,18 +218,19 @@ class PPOLearner:
                 actions=actions
             )
 
-            # Get advantage estimates
-            advantage_estimates = discounted_returns - values.detach()
-
             # Calculate loss
-            loss = self.ppo_loss(
-                values=values,
-                discounted_returns=discounted_returns,
-                log_probabilities=log_probabilities,
-                old_log_probabilities=old_log_probabilities,
-                entropy=entropy,
-                advantage_estimates=advantage_estimates
-            )
+            if train_critic_only:
+                loss = torch.mean((discounted_returns - values).pow(2))
+            else:
+                advantage_estimates = discounted_returns - values.detach()
+                loss = self.ppo_loss(
+                    values=values,
+                    discounted_returns=discounted_returns,
+                    log_probabilities=log_probabilities,
+                    old_log_probabilities=old_log_probabilities,
+                    entropy=entropy,
+                    advantage_estimates=advantage_estimates
+                )
 
             # Perform gradient update
             self.optimizer.zero_grad()
@@ -240,14 +247,25 @@ class PPOLearner:
         if type(self.clipping_param) == AnnealedParam:
             self.clipping_param = self.clipping_param.update()
 
+        if type(self.critic_coefficient) == AnnealedParam:
+            self.critic_coefficient = self.critic_coefficient.update()
+
         if type(self.entropy_coefficient) == AnnealedParam:
             self.entropy_coefficient = self.entropy_coefficient.update()
 
         if type(self.policy.actor_std) == AnnealedParam:
             self.policy.actor_std = self.policy.actor_std.update()
 
+    def initialize_policy_with_behavior_cloning(self, expert_data: TensorDataset, **bc_params):
+        bc_learner = BCLearner(policy=self.policy, **bc_params)
+        bc_learner.train(expert_data=expert_data)
+        self.policy = bc_learner.policy
+
     @timer
-    def train(self, pool: mp.Pool) -> None:
+    def train(self, pool: Optional[mp.Pool] = None, expert_data: Optional[TensorDataset] = None) -> None:
+
+        if expert_data:
+            self.initialize_policy_with_behavior_cloning(expert_data=expert_data)
 
         for i in range(self.n_iterations):
 
@@ -275,7 +293,8 @@ class PPOLearner:
                 states=states,
                 actions=actions,
                 discounted_returns=discounted_returns,
-                old_log_probabilities=old_log_probabilities
+                old_log_probabilities=old_log_probabilities,
+                train_critic_only=False #(not i and expert_data)
             )
 
             # Log performance
@@ -291,5 +310,15 @@ class PPOLearner:
             df = pd.DataFrame(self.mean_rewards, columns=[self.seed])
             df.index.name = "iteration"
         df.to_csv(f"{path}.csv")
+
+
+# Nice pattern for concatenating lists
+def concatenate_lists(lists: Iterable[List[Any]]) -> List[Any]:
+    return list(chain(*lists))
+
+
+# Logit function
+def logit(x: float) -> float:
+    return np.log(x / (1 - x))
 
 

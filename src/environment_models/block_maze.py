@@ -1,5 +1,5 @@
 import numpy as np
-from models.environment import Environment
+from environment_models.base import BaseEnv
 
 from typing import Callable, Optional
 
@@ -16,7 +16,7 @@ def generate_maze(
     return is_blocked
 
 
-class BlockMazeEnv(Environment):
+class BlockMazeEnv(BaseEnv):
 
     def __init__(
             self,
@@ -75,7 +75,7 @@ class BlockMazeEnv(Environment):
             else:
                 return False
 
-        Environment.__init__(
+        BaseEnv.__init__(
             self,
             initial_state=initial_state,
             transition_function=transition_function,

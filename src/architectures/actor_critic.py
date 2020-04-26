@@ -5,10 +5,8 @@ import torch
 import torch.nn as nn
 from torch.distributions import Categorical, Normal
 
-from algorithm.annealing import AnnealedParam
-
-# Set up device
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+from architectures.mlp import MultiLayerPerception, DEVICE
+from algorithms.param_annealing import AnnealedParam
 
 
 class ActorCritic(nn.Module):
@@ -21,7 +19,7 @@ class ActorCritic(nn.Module):
             critic_hidden_layer_units: List[int],
             action_map: Optional[Dict[int, np.ndarray]],
             actor_std: Union[float, AnnealedParam],
-            non_linearity: nn.Module = nn.ReLU,
+            activation: nn.Module
     ):
         super(ActorCritic, self).__init__()
 
@@ -35,36 +33,22 @@ class ActorCritic(nn.Module):
         self.actor_std = actor_std
 
         # Make actor network
-        actor_layers = [
-            nn.Linear(state_space_dimension, actor_hidden_layer_units[0]).to(DEVICE),
-            non_linearity().to(DEVICE)
-        ]
-        for i in range(1, len(actor_hidden_layer_units)):
-            actor_layers += [
-                nn.Linear(actor_hidden_layer_units[i - 1], actor_hidden_layer_units[i]).to(DEVICE),
-                non_linearity().to(DEVICE)
-            ]
-        actor_layers += [
-            nn.Linear(actor_hidden_layer_units[-1], action_space_dimension).to(DEVICE),
-        ]
-        if self.actor_is_discrete:
-            actor_layers += [nn.Softmax(dim=-1).to(DEVICE)]
-        self.actor = nn.Sequential(*actor_layers)
+        self.actor = MultiLayerPerception(
+            in_features=state_space_dimension,
+            out_features=action_space_dimension,
+            hidden_layer_units=actor_hidden_layer_units,
+            activation=activation,
+            softmax_output=self.actor_is_discrete
+        ).to(DEVICE)
 
         # Make critic network
-        critic_layers = [
-            nn.Linear(state_space_dimension, critic_hidden_layer_units[0]).to(DEVICE),
-            non_linearity().to(DEVICE)
-        ]
-        for i in range(1, len(critic_hidden_layer_units)):
-            critic_layers += [
-                nn.Linear(critic_hidden_layer_units[i - 1], critic_hidden_layer_units[i]).to(DEVICE),
-                non_linearity().to(DEVICE)
-            ]
-        critic_layers += [
-            nn.Linear(critic_hidden_layer_units[-1], 1).to(DEVICE)
-        ]
-        self.critic = nn.Sequential(*critic_layers).to(DEVICE)
+        self.critic = MultiLayerPerception(
+            in_features=state_space_dimension,
+            out_features=1,
+            hidden_layer_units=critic_hidden_layer_units,
+            activation=activation,
+            softmax_output=False
+        ).to(DEVICE)
 
     def get_distribution(self, states: torch.Tensor):
         if self.actor_is_discrete:

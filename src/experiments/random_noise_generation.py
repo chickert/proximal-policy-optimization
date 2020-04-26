@@ -11,7 +11,7 @@ def uniform() -> float:
     return 2*np.random.uniform() - 1
 
 
-def adversarial(scaling_factor: float = 1.0) -> float:
+def adversarial() -> float:
     return 2*np.random.binomial(1, 0.5) - 1
 
 

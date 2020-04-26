@@ -1,16 +1,15 @@
-import numpy as np
 import logging
 
-from algorithm.annealing import AnnealedParam
-from toy_environments.goal_finder import GoalFinderEnv
+from algorithms.param_annealing import AnnealedParam
+from environment_models.goal_finder import GoalFinderEnv
 from experiments.scaffold import run_batch, ParamGrid
-from experiments.noise import normal, uniform, adversarial, rescale_noise
+from experiments.random_noise_generation import normal, uniform, adversarial, rescale_noise
 
 
 logger = logging.basicConfig(level=logging.DEBUG)
 
 # Set experiment batch parameters
-PATH = "../../results/goal_finder/"
+PATH = "../../data/results/goal_finder/"
 N_CORES = 4
 N_TRIALS = 5
 
@@ -18,11 +17,11 @@ N_TRIALS = 5
 ENVIRONMENT_PARAM_GRIDS = [
     ParamGrid(
         param_name="n_dimensions",
-        grid=[2, 3, 4],
+        grid=[2, 3],
     ),
     ParamGrid(
         param_name="sparsity_param",
-        grid=[2, 4, 8, 16],
+        grid=[2, 4, 8],
     ),
     ParamGrid(
         param_name="reward_noise",
@@ -42,7 +41,7 @@ ENVIRONMENT_PARAM_GRIDS = [
 PPO_PARAM_GRIDS = [
     ParamGrid(
         param_name="clipping_param",
-        grid=[0.1, 0.2, 0.3, 0.4, AnnealedParam(param_min=0.1, param_max=0.4, period=20)]
+        grid=[0.2, 0.3, 0.4, AnnealedParam(param_min=0.1, param_max=0.4, period=20)]
     ),
     ParamGrid(
         param_name="clipping_type",
@@ -52,14 +51,14 @@ PPO_PARAM_GRIDS = [
 
 # Set fixed PPO parameters
 FIXED_PPO_PARAMS = {
-    "actor_hidden_layer_units": [64, 32],
-    "critic_hidden_layer_units": [32, 18],
+    "actor_hidden_layer_units": [128, 64],
+    "critic_hidden_layer_units": [64, 32],
     "n_steps_per_trajectory": 16,
-    "n_trajectories_per_batch": 32,
+    "n_trajectories_per_batch": 64,
     "n_iterations": 100,
     "learning_rate": AnnealedParam(
-        param_min=1e-4,
-        param_max=5e-4,
+        param_min=2e-4,
+        param_max=4e-4,
         period=20,
         schedule_type="linear",
     )

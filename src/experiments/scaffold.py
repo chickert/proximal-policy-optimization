@@ -1,23 +1,23 @@
+import logging
+from itertools import product
 from typing import Optional, Dict, Type, Iterable, List, Any
 
 import numpy as np
-import logging
 from pathos.multiprocessing import Pool, cpu_count
 
-from algorithm.ppo import PPOLearner
-from models.environment import Environment
-from utils.misc import combine_grids
+from environment_models.base import BaseEnv
+from algorithms.ppo import PPOLearner
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 
 def run_experiment(
-        environment: Environment,
+        environment: BaseEnv,
         training_rewards_path: str,
-        pool: Optional[Pool] = None,
+        ppo_params: Optional[Dict[str, Any]],
         n_trials: int = 5,
-        ppo_params: Optional[Dict[str, Any]] = None,
+        pool: Optional[Pool] = None,
         action_map: Optional[Dict[int, np.ndarray]] = None
 ) -> None:
 
@@ -42,7 +42,7 @@ def run_experiment(
         learner.train(pool=pool)
 
         # Save learner outputs
-        learner.save_training_rewards(path=f"{training_rewards_path}.csv")
+        learner.save_training_rewards(path=training_rewards_path)
 
 
 class ParamGrid:
@@ -72,9 +72,13 @@ def make_experiment_id(
     return "_".join(param_strings)
 
 
+def combine_grids(grids: List[Iterable[Any]], keys: Iterable[str]) -> List[Dict[str, Any]]:
+    return [dict(zip(keys, perm)) for perm in product(*grids)]
+
+
 def run_batch(
         folder_path: str,
-        environment_type: Type[Environment],
+        environment_type: Type[BaseEnv],
         environment_param_grids: List[ParamGrid],
         ppo_param_grids: List[ParamGrid],
         fixed_ppo_params: Optional[Dict[str, Any]] = None,

@@ -3,7 +3,7 @@ from typing import Callable, Tuple, Optional
 import numpy as np
 
 
-class Environment:
+class BaseEnv:
 
     def __init__(
             self,
@@ -27,7 +27,10 @@ class Environment:
         reward = self.reward_function(state=self.state, action=action)
         return reward, done
 
-    def reset(self):
+    def set_state(self, state) -> None:
+        self.state = state
+
+    def reset(self) -> None:
         self.state = self.initial_state
 
 

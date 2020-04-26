@@ -1,16 +1,16 @@
 import numpy as np
 import logging
 
-from algorithm.annealing import AnnealedParam
-from toy_environments.physics_lander import PhysicsLanderEnv, constant_force
+from algorithms.param_annealing import AnnealedParam
+from environment_models.physics_lander import PhysicsLanderEnv, constant_force
 from experiments.scaffold import run_batch, ParamGrid
-from experiments.noise import normal, uniform, adversarial, rescale_noise
+from experiments.random_noise_generation import normal, uniform, adversarial, rescale_noise
 
 
 logger = logging.basicConfig(level=logging.DEBUG)
 
 # Set experiment batch parameters
-PATH = "../../results/physics_lander/"
+PATH = "../../data/results/physics_lander/"
 N_CORES = 4
 N_TRIALS = 5
 

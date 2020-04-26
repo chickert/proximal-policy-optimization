@@ -1,12 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from models.environment import Environment
-from algorithm.ppo import PPOLearner
+from environment_models.base import BaseEnv
+from algorithms.ppo import PPOLearner
 
 from typing import Callable
 
 
-class GoalFinderEnv(Environment):
+class GoalFinderEnv(BaseEnv):
 
     def __init__(
             self,
@@ -36,7 +36,7 @@ class GoalFinderEnv(Environment):
             distance_to_goal = np.linalg.norm(state - goal_state, 2)
             return np.exp(-sparsity_param * distance_to_goal ** 2) + reward_noise*noise_sample()
 
-        Environment.__init__(
+        BaseEnv.__init__(
             self,
             initial_state=initial_state,
             transition_function=transition_function,
