@@ -90,3 +90,9 @@ class ActorCritic(nn.Module):
             return self.action_map[action.item()]
         else:
             return action.detach().numpy()
+
+    def save(self, path) -> None:
+        torch.save(self.state_dict(), path)
+
+    def load(self, path) -> None:
+        self.load_state_dict(torch.load(path))
