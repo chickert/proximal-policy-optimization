@@ -50,11 +50,15 @@ PPO_PARAM_GRIDS = [
     ),
 ]
 
+# Set actor-critic policy params
+POLICY_PARAMS = {
+    "actor_hidden_layer_units": (64, 32),
+    "critic_hidden_layer_units": (32, 18),
+    "actor_std": 1e-2
+}
+
 # Set fixed PPO parameters
 FIXED_PPO_PARAMS = {
-    "action_space_dimension": 2,
-    "actor_hidden_layer_units": [64, 32],
-    "critic_hidden_layer_units": [32, 18],
     "n_steps_per_trajectory": 32,
     "n_trajectories_per_batch": 64,
     "n_iterations": 100,
@@ -71,9 +75,10 @@ if __name__ == "__main__":
     run_batch(
         folder_path=PATH,
         environment_type=PhysicsLanderEnv,
-        n_cores=N_CORES,
-        n_trials=N_TRIALS,
         environment_param_grids=ENVIRONMENT_PARAM_GRIDS,
         ppo_param_grids=PPO_PARAM_GRIDS,
-        fixed_ppo_params=FIXED_PPO_PARAMS
+        policy_params=POLICY_PARAMS,
+        fixed_ppo_params=FIXED_PPO_PARAMS,
+        n_cores=N_CORES,
+        n_trials=N_TRIALS,
     )

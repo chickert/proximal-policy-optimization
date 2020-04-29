@@ -6,6 +6,7 @@ import numpy as np
 from pathos.multiprocessing import Pool, cpu_count
 
 from environment_models.base import BaseEnv
+from architectures.actor_critic import ActorCritic
 from algorithms.ppo import PPOLearner
 
 # Set up logging
@@ -15,28 +16,24 @@ logger = logging.getLogger(__name__)
 def run_experiment(
         environment: BaseEnv,
         training_rewards_path: str,
-        ppo_params: Optional[Dict[str, Any]],
-        n_trials: int = 5,
+        policy_params: Optional[Dict[str, Any]],
+        ppo_params: Optional[Dict[str, Any]] = None,
         pool: Optional[Pool] = None,
-        action_map: Optional[Dict[int, np.ndarray]] = None
+        n_trials: int = 5,
 ) -> None:
 
     for seed in range(n_trials):
 
+        # Initialize policy
+        policy = ActorCritic(**policy_params)
+
         # Initialize learner
-        if action_map:
-            learner = PPOLearner(
-                environment=environment,
-                action_map=action_map,
-                seed=seed,
-                **ppo_params
-            )
-        else:
-            learner = PPOLearner(
-                environment=environment,
-                seed=seed,
-                **ppo_params
-            )
+        learner = PPOLearner(
+            environment=environment,
+            policy=policy,
+            seed=seed,
+            **(ppo_params if ppo_params else {})
+        )
 
         # Train learner
         learner.train(pool=pool)
@@ -81,10 +78,11 @@ def run_batch(
         environment_type: Type[BaseEnv],
         environment_param_grids: List[ParamGrid],
         ppo_param_grids: List[ParamGrid],
+        policy_params: Dict[str, Any],
+        fixed_environment_params: Optional[Dict[str, Any]] = None,
         fixed_ppo_params: Optional[Dict[str, Any]] = None,
         n_trials: int = 5,
         n_cores: Optional[int] = None,
-        action_map: Optional[Dict[int, np.ndarray]] = None
 ) -> None:
 
     # Set up multiprocessing pool
@@ -96,7 +94,10 @@ def run_batch(
     for environment_params in combine_grids(
         *zip(*[(grid.grid, grid.param_name) for grid in environment_param_grids])
     ):
-        environment = environment_type(**environment_params)
+        environment = environment_type(
+            **environment_params,
+            **(fixed_environment_params if fixed_environment_params else {})
+        )
         for ppo_params in combine_grids(
             *zip(*[(grid.grid, grid.param_name) for grid in ppo_param_grids])
         ):
@@ -104,15 +105,20 @@ def run_batch(
                 environment_params=environment_params,
                 ppo_params=ppo_params
             )
-            if fixed_ppo_params:
-                ppo_params = dict(**ppo_params, **fixed_ppo_params)
             run_experiment(
                 environment=environment,
+                policy_params=dict(
+                    **policy_params,
+                    state_space_dimension=environment.state_space_dimension,
+                    action_space_dimension=environment.action_space_dimension
+                ),
+                ppo_params=dict(
+                    **ppo_params,
+                    **(fixed_ppo_params if fixed_ppo_params else {})
+                ),
                 training_rewards_path=f"{folder_path}{experiment_id}",
-                pool=pool,
-                ppo_params=ppo_params,
-                action_map=action_map,
-                n_trials=n_trials
+                n_trials=n_trials,
+                pool=pool
             )
 
     # Close pool

@@ -1,5 +1,5 @@
 
-from typing import List
+from typing import Tuple
 
 import torch
 import torch.nn as nn
@@ -14,7 +14,7 @@ class MultiLayerPerception(nn.Sequential):
             self,
             in_features: int,
             out_features: int,
-            hidden_layer_units: List[int],
+            hidden_layer_units: Tuple[int, ...],
             activation: nn.Module,
             softmax_output: bool = False
     ):

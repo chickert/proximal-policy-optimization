@@ -6,6 +6,8 @@ from environment_models.block_maze import BlockMazeEnv
 from experiments.scaffold import run_batch, ParamGrid
 from experiments.random_noise_generation import normal, uniform, adversarial, rescale_noise
 
+import torch.nn as nn
+
 
 logger = logging.basicConfig(level=logging.DEBUG)
 
@@ -54,11 +56,21 @@ PPO_PARAM_GRIDS = [
     ),
 ]
 
+# Set actor-critic policy params
+POLICY_PARAMS = {
+    "actor_hidden_layer_units": (64, 32),
+    "critic_hidden_layer_units": (32, 18),
+    "action_map": {
+        0: np.array([1, 0]),
+        1: np.array([-1, 0]),
+        2: np.array([0, 1]),
+        3: np.array([0, -1])
+    },
+    "activation": nn.SELU
+}
+
 # Set fixed PPO parameters
 FIXED_PPO_PARAMS = {
-    "action_space_dimension": 4,
-    "actor_hidden_layer_units": [64, 32],
-    "critic_hidden_layer_units": [32, 18],
     "n_steps_per_trajectory": 32,
     "n_trajectories_per_batch": 64,
     "n_iterations": 100,
@@ -68,12 +80,7 @@ FIXED_PPO_PARAMS = {
         period=20,
         schedule_type="linear",
     ),
-    "action_map": {
-        0: np.array([1, 0]),
-        1: np.array([-1, 0]),
-        2: np.array([0, 1]),
-        3: np.array([0, -1])
-    }
+
 }
 
 # Run batch of experiments on goal finder environment
@@ -81,9 +88,10 @@ if __name__ == "__main__":
     run_batch(
         folder_path=PATH,
         environment_type=BlockMazeEnv,
-        n_cores=N_CORES,
-        n_trials=N_TRIALS,
         environment_param_grids=ENVIRONMENT_PARAM_GRIDS,
         ppo_param_grids=PPO_PARAM_GRIDS,
-        fixed_ppo_params=FIXED_PPO_PARAMS
+        policy_params=POLICY_PARAMS,
+        fixed_ppo_params=FIXED_PPO_PARAMS,
+        n_cores=N_CORES,
+        n_trials=N_TRIALS
     )

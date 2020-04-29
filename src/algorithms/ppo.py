@@ -6,13 +6,11 @@ import numpy as np
 import pandas as pd
 import pathos.multiprocessing as mp
 import torch
-import torch.nn as nn
 from torch.utils.data import TensorDataset
 
 from environment_models.base import BaseEnv
 from architectures.actor_critic import ActorCritic, DEVICE
 from algorithms.param_annealing import AnnealedParam
-from algorithms.behavior_cloning import BCLearner
 from algorithms.timer import timer
 
 # Set up logging
@@ -24,12 +22,8 @@ class PPOLearner:
     def __init__(
             self,
             environment: BaseEnv,
-            critic_hidden_layer_units: List[int],
-            actor_hidden_layer_units: List[int],
-            action_space_dimension: Optional[int] = None,
-            action_map: Optional[Dict[int, np.ndarray]] = None,
-            activation: nn.Module = nn.SELU,
-            n_steps_per_trajectory: int = 32,
+            policy: ActorCritic,
+            n_steps_per_trajectory: int = 16,
             n_trajectories_per_batch: int = 64,
             n_epochs: int = 10,
             n_iterations: int = 200,
@@ -38,7 +32,7 @@ class PPOLearner:
             clipping_param: Union[float, AnnealedParam] = 0.2,
             critic_coefficient: Union[float, AnnealedParam] = 1.0,
             entropy_coefficient: Union[float, AnnealedParam] = 1e-2,
-            actor_std: Union[float, AnnealedParam] = 0.05,
+            bc_coefficient: Union[float, AnnealedParam] = 1e-3,
             clipping_type: str = "clamp",
             seed: int = 0
     ):
@@ -47,25 +41,9 @@ class PPOLearner:
         torch.manual_seed(seed)
         np.random.seed(seed)
 
-        # Set environment attribute
+        # Set environment and policy attributes
         self.environment = environment
-
-        # Initialize actor-critic policy network
-        state_space_dimension = len(self.environment.state)
-        if action_space_dimension is None:
-            if action_map:
-                action_space_dimension = len(action_map)
-            else:
-                action_space_dimension = state_space_dimension
-        self.policy = ActorCritic(
-            state_space_dimension=state_space_dimension,
-            action_space_dimension=action_space_dimension,
-            actor_hidden_layer_units=actor_hidden_layer_units,
-            critic_hidden_layer_units=critic_hidden_layer_units,
-            action_map=action_map,
-            actor_std=actor_std,
-            activation=activation
-        )
+        self.policy = policy
 
         # Set hyper-parameter attributes
         self.n_steps_per_trajectory = n_steps_per_trajectory
@@ -77,6 +55,7 @@ class PPOLearner:
         self.clipping_param = clipping_param
         self.critic_coefficient = critic_coefficient
         self.entropy_coefficient = entropy_coefficient
+        self.bc_coefficient = bc_coefficient
         self.clipping_type = clipping_type
 
         # Initialize optimizer
@@ -168,6 +147,10 @@ class PPOLearner:
 
         return states, actions, discounted_returns, old_log_probabilities
 
+    @staticmethod
+    def critic_loss(discounted_returns: torch.Tensor, values: torch.Tensor) -> torch.Tensor:
+        return torch.mean((discounted_returns - values).pow(2))
+
     def ppo_loss(
             self,
             values: torch.Tensor,
@@ -175,7 +158,7 @@ class PPOLearner:
             log_probabilities: torch.Tensor,
             old_log_probabilities: torch.Tensor,
             entropy: torch.Tensor,
-            advantage_estimates: torch.Tensor,
+            advantage_estimates: torch.Tensor
     ) -> torch.Tensor:
         ratio = torch.exp(log_probabilities - old_log_probabilities)
         if self.clipping_type == "clamp":
@@ -196,9 +179,16 @@ class PPOLearner:
                 ratio * advantage_estimates
             )
         )
-        critic_loss = torch.mean((discounted_returns - values).pow(2))
+        critic_loss = self.critic_loss(discounted_returns=discounted_returns, values=values)
         entropy_loss = -torch.mean(entropy)
         return actor_loss + self.critic_coefficient*critic_loss + self.entropy_coefficient*entropy_loss
+
+    def bc_loss(self, expert_data: TensorDataset) -> torch.Tensor:
+        states, actions = map(torch.stack, zip(*expert_data))
+        states = states.to(DEVICE)
+        actions = actions.to(DEVICE)
+        expert_log_probabilities = self.policy.get_distribution(states).log_prob(actions).float().to(DEVICE)
+        return -torch.mean(expert_log_probabilities)
 
     @timer
     def update_policy_network(
@@ -207,6 +197,7 @@ class PPOLearner:
             actions: torch.Tensor,
             discounted_returns: torch.Tensor,
             old_log_probabilities: torch.Tensor,
+            expert_data: Optional[TensorDataset] = None,
             train_critic_only: bool = False
     ) -> None:
 
@@ -220,7 +211,7 @@ class PPOLearner:
 
             # Calculate loss
             if train_critic_only:
-                loss = torch.mean((discounted_returns - values).pow(2))
+                loss = self.critic_loss(discounted_returns=discounted_returns, values=values)
             else:
                 advantage_estimates = discounted_returns - values.detach()
                 loss = self.ppo_loss(
@@ -231,6 +222,8 @@ class PPOLearner:
                     entropy=entropy,
                     advantage_estimates=advantage_estimates
                 )
+                if expert_data:
+                    loss = loss + self.bc_coefficient*self.bc_loss(expert_data=expert_data)
 
             # Perform gradient update
             self.optimizer.zero_grad()
@@ -256,16 +249,15 @@ class PPOLearner:
         if type(self.policy.actor_std) == AnnealedParam:
             self.policy.actor_std = self.policy.actor_std.update()
 
-    def initialize_policy_with_behavior_cloning(self, expert_data: TensorDataset, **bc_params):
-        bc_learner = BCLearner(policy=self.policy, **bc_params)
-        bc_learner.train(expert_data=expert_data)
-        self.policy = bc_learner.policy
+        if type(self.bc_coefficient) == AnnealedParam:
+            self.bc_coefficient = self.bc_coefficient.update()
 
     @timer
-    def train(self, pool: Optional[mp.Pool] = None, expert_data: Optional[TensorDataset] = None) -> None:
-
-        if expert_data:
-            self.initialize_policy_with_behavior_cloning(expert_data=expert_data)
+    def train(
+            self, pool: Optional[mp.Pool] = None,
+            expert_data: Optional[TensorDataset] = None,
+            train_critic_only_on_init: bool = False
+    ) -> None:
 
         for i in range(self.n_iterations):
 
@@ -294,7 +286,7 @@ class PPOLearner:
                 actions=actions,
                 discounted_returns=discounted_returns,
                 old_log_probabilities=old_log_probabilities,
-                train_critic_only=False #(not i and expert_data)
+                train_critic_only=(train_critic_only_on_init and not i)
             )
 
             # Log performance

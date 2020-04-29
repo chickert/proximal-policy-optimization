@@ -51,7 +51,8 @@ class PhysicsLanderEnv(BaseEnv):
             self,
             initial_state=initial_state,
             transition_function=transition_function,
-            reward_function=reward_function
+            reward_function=reward_function,
+            action_space_dimension=int(len(initial_state) / 2)
         )
 
         np.random.seed(seed)

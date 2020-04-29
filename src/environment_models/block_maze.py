@@ -80,6 +80,8 @@ class BlockMazeEnv(BaseEnv):
             initial_state=initial_state,
             transition_function=transition_function,
             reward_function=reward_function,
-            is_done=is_done
+            is_done=is_done,
+            state_space_dimension=2,
+            action_space_dimension=4
         )
         self.goal_state = goal_state

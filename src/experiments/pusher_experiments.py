@@ -32,15 +32,19 @@ if __name__ == "__main__":
     # Load data
     expert_data = np.load(EXPERT_DATA_PATH)
     expert_data = TensorDataset(torch.tensor(expert_data["obs"]), torch.tensor(expert_data["action"]))
+    states, actions = map(torch.stack, zip(*expert_data))
+    print(states.shape, actions.shape)
 
-    # Intialze environment
-    environment = PusherEnv()
 
-    # Learn
-    learner = PPOLearner(
-        environment=environment,
-        **PPO_PARAMS
-    )
-    learner.train(expert_data=expert_data)
+
+    # # Intialze environment
+    # environment = PusherEnv()
+    #
+    # # Learn
+    # learner = PPOLearner(
+    #     environment=environment,
+    #     **PPO_PARAMS
+    # )
+    # learner.train(expert_data=expert_data)
 
 

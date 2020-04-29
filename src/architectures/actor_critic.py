@@ -15,12 +15,14 @@ class ActorCritic(nn.Module):
             self,
             state_space_dimension: int,
             action_space_dimension: int,
-            actor_hidden_layer_units: List[int],
-            critic_hidden_layer_units: List[int],
-            action_map: Optional[Dict[int, np.ndarray]],
-            actor_std: Union[float, AnnealedParam],
-            activation: nn.Module
+            actor_hidden_layer_units: Tuple[int, ...] = (128, 64),
+            critic_hidden_layer_units: Tuple[int, ...] = (64, 32),
+            action_map: Optional[Dict[int, np.ndarray]] = None,
+            actor_std: Union[float, AnnealedParam] = 1e-2,
+            activation: nn.Module = nn.ReLU,
+            seed: int = 0
     ):
+        torch.manual_seed(seed)
         super(ActorCritic, self).__init__()
 
         # Define policy as discrete or continuous
