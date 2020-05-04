@@ -46,7 +46,7 @@ PPO_PARAM_GRIDS = [
     ),
     ParamGrid(
         param_name="clipping_type",
-        grid=["clamp", "sigmoid", "tanh"]
+        grid=["clamp", "tanh", "rollback"]
     )
 ]
 

@@ -31,6 +31,7 @@ class PPOLearner:
             discount: float = 0.99,
             learning_rate: Union[float, AnnealedParam] = 3e-4,
             clipping_param: Union[float, AnnealedParam] = 0.2,
+            rollback_param: Union[float, AnnealedParam] = 0.1,
             critic_coefficient: Union[float, AnnealedParam] = 1.0,
             entropy_coefficient: Union[float, AnnealedParam] = 0.001,
             actor_std: float = 0.05,
@@ -69,6 +70,7 @@ class PPOLearner:
         self.discount = discount
         self.learning_rate = learning_rate
         self.clipping_param = clipping_param
+        self.rollback_param = rollback_param
         self.critic_coefficient = critic_coefficient
         self.entropy_coefficient = entropy_coefficient
         self.clipping_type = clipping_type
@@ -175,14 +177,18 @@ class PPOLearner:
         ratio = torch.exp(log_probabilities - old_log_probabilities)
         if self.clipping_type == "clamp":
             clipped_ratio = torch.clamp(ratio, 1 - self.clipping_param, 1 + self.clipping_param)
-        elif self.clipping_type == "sigmoid":
-            const = -logit(1/2 - self.clipping_param) / self.clipping_param
-            clipped_ratio = torch.sigmoid(const * (ratio - 1)) + 0.5
+        elif self.clipping_type == "rollback":
+            clipped_ratio = torch.where(
+                ratio > 1 + self.clipping_param,
+                -self.rollback_param * ratio + (1 + self.clipping_param) * (1 + self.rollback_param),
+                torch.where(
+                    ratio < 1 - self.clipping_param,
+                    -self.rollback_param * ratio + (1 + self.clipping_param) * (1 - self.rollback_param),
+                    ratio
+                )
+            )
         elif self.clipping_type == "tanh":
-            const = np.arctanh(self.clipping_param) / self.clipping_param
-            clipped_ratio = torch.tanh(const * (ratio - 1)) + 1
-        elif self.clipping_type == "none":
-            clipped_ratio = ratio
+            clipped_ratio = self.clipping_param * torch.tanh((ratio - 1) / self.clipping_param) + 1
         else:
             raise NotImplementedError
         actor_loss = -torch.mean(
@@ -239,6 +245,9 @@ class PPOLearner:
 
         if type(self.clipping_param) == AnnealedParam:
             self.clipping_param = self.clipping_param.update()
+
+        if type(self.rollback_param) == AnnealedParam:
+            self.rollback_param = self.rollback_param.update()
 
         if type(self.entropy_coefficient) == AnnealedParam:
             self.entropy_coefficient = self.entropy_coefficient.update()
