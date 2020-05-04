@@ -8,6 +8,10 @@ from algorithms.ppo import PPOLearner
 from algorithms.behavior_cloning import BCLearner
 from environment_models.pusher import PusherEnv
 from architectures.actor_critic import ActorCritic
+from airobot_utils.pusher_simulator import PusherSimulator
+import pybullet as p
+import cv2
+
 
 logger = logging.basicConfig(level=logging.DEBUG)
 
@@ -28,7 +32,7 @@ if __name__ == "__main__":
         action_space_dimension=environment.action_space_dimension,
         actor_hidden_layer_units=(128, 64),
         critic_hidden_layer_units=(64, 32),
-        actor_std=5e-3
+        actor_std=1e-2
     )
 
     bc_learner = BCLearner(
@@ -43,7 +47,7 @@ if __name__ == "__main__":
     ppo_with_bc_learner = PPOLearner(
         environment=environment,
         policy=bc_learner.policy,
-        n_steps_per_trajectory=16,
+        n_steps_per_trajectory=32,
         n_trajectories_per_batch=64,
         n_epochs=5,
         n_iterations=20,
@@ -52,8 +56,29 @@ if __name__ == "__main__":
         entropy_coefficient=1e-3,
         bc_coefficient=1e-3
     )
-    ppo_with_bc_learner.train(expert_data=expert_data, train_critic_only_on_init=True)
-    ppo_with_bc_learner.policy.save(path=f"{RESULTS_FOLDER}ppo_with_bc_model.pt")
+    trajectories = [actions for _, actions, _, _ in [ppo_with_bc_learner.generate_trajectory() for _ in range(1)]]
+
+    simulator = PusherSimulator(render=True)
+    simulator.render()
+    for trajectory in trajectories:
+        output = cv2.VideoWriter(f"test.mp4", cv2.VideoWriter_fourcc(*'mp4v'), 30, (640, 480))
+        for action in trajectory:
+            simulator.apply_action(action)
+            image = simulator.robot.cam.get_images(get_rgb=True, get_depth=False)[0]
+            output.write(np.array(image))
+
+
+
+
+    # ppo_with_bc_learner.environment.simulator = PusherSimulator(render=True)
+    # p.connect(p.DIRECT)
+    # for i in range(1):
+    #     p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4, "test.mp4") #, f"{RESULTS_FOLDER}/bc_video_{i + 1}.mp4")
+    #     _, actions, _, _ = ppo_with_bc_learner.generate_trajectory()
+    #     p.stopStateLogging(p.STATE_LOGGING_VIDEO_MP4)
+
+    # ppo_with_bc_learner.train(expert_data=expert_data, train_critic_only_on_init=True)
+    # ppo_with_bc_learner.policy.save(path=f"{RESULTS_FOLDER}ppo_with_bc_model.pt")
 
 
 

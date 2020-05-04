@@ -26,7 +26,7 @@ class PusherEnv(BaseEnv):
 
         BaseEnv.__init__(
             self,
-            initial_state= self.simulator.get_obs(),
+            initial_state=self.simulator.get_obs(),
             transition_function=transition_function,
             reward_function=reward_function,
             state_space_dimension=9,
