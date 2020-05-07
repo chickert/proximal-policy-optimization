@@ -1,6 +1,7 @@
 import logging
+from copy import deepcopy
 from itertools import chain
-from typing import Tuple, List, Optional, Dict, Union, Iterable, Any
+from typing import Tuple, List, Optional, Union, Iterable, Any
 
 import numpy as np
 import pandas as pd
@@ -8,10 +9,10 @@ import pathos.multiprocessing as mp
 import torch
 from torch.utils.data import TensorDataset
 
-from environment_models.base import BaseEnv
-from architectures.actor_critic import ActorCritic, DEVICE
 from algorithms.param_annealing import AnnealedParam
 from algorithms.timer import timer
+from architectures.actor_critic import ActorCritic, DEVICE
+from environment_models.base import BaseEnv
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -63,7 +64,8 @@ class PPOLearner:
 
         # Initialize attributes for performance tracking
         self.mean_rewards = []
-        self.mean_discounted_returns = []
+        self.best_mean_reward = -np.inf
+        self.best_policy = policy
 
     def calculate_discounted_returns(self, rewards: List[float]) -> List[float]:
         discounted_returns = []
@@ -75,7 +77,8 @@ class PPOLearner:
 
     def generate_trajectory(
             self,
-            use_argmax: bool = False
+            use_argmax: bool = False,
+            perform_reset: bool = True
     ) -> Tuple[List[np.ndarray], List[np.ndarray], List[float], List[float]]:
 
         states = []
@@ -101,8 +104,9 @@ class PPOLearner:
             if done:
                 break
 
-        # Reset environment to initial state
-        self.environment.reset()
+        # Reset environment
+        if perform_reset:
+            self.environment.reset()
 
         # Calculate discounted rewards
         discounted_returns = self.calculate_discounted_returns(rewards=rewards)
@@ -113,12 +117,13 @@ class PPOLearner:
     @timer
     def generate_batch(
             self,
-            pool: Optional[mp.Pool]
+            pool: Optional[mp.Pool],
+            use_argmax: bool = False
     ) -> Tuple[List[np.ndarray], List[np.ndarray], List[float], List[float]]:
 
         # Generate batch of trajectories
         if pool is None:
-            trajectories = [self.generate_trajectory() for _ in range(self.n_trajectories_per_batch)]
+            trajectories = [self.generate_trajectory(use_argmax=use_argmax) for _ in range(self.n_trajectories_per_batch)]
         else:
             trajectories = pool.starmap(self.generate_trajectory, [() for _ in range(self.n_trajectories_per_batch)])
 
@@ -269,10 +274,6 @@ class PPOLearner:
             # Generate batch
             states, actions, rewards, discounted_returns = self.generate_batch(pool=pool)
 
-            # Track performance
-            self.mean_rewards.append(np.mean(rewards))
-            self.mean_discounted_returns.append(np.mean(discounted_returns))
-
             # Convert data to PyTorch tensors
             states, actions, discounted_returns, old_log_probabilities = self.get_tensors(
                 states=states,
@@ -286,13 +287,20 @@ class PPOLearner:
                 actions=actions,
                 discounted_returns=discounted_returns,
                 old_log_probabilities=old_log_probabilities,
+                expert_data=expert_data,
                 train_critic_only=(train_critic_only_on_init and not i)
             )
 
-            # Log performance
-            logger.info(f"Mean reward: {self.mean_rewards[-1]}")
-            logger.info(f"Mean discounted return: {self.mean_discounted_returns[-1]}")
+            # Track and log performance
+            mean_reward = np.mean(rewards)
+            self.mean_rewards.append(mean_reward)
+            if mean_reward > self.best_mean_reward:
+                self.best_mean_reward = mean_reward
+                self.best_policy = deepcopy(self.policy)
+            logger.info(f"Mean reward: {'{0:.3f}'.format(mean_reward)}")
             logger.info("-" * 50)
+
+        self.policy = self.best_policy
 
     def save_training_rewards(self, path: str) -> None:
         try:

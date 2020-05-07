@@ -18,7 +18,9 @@ class BCLearner:
             n_epochs: int = 50,
             batch_size: int = 128,
             learning_rate: float = 3e-4,
+            seed: int = 0
     ):
+        torch.manual_seed(seed)
         self.policy = policy
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=learning_rate)
         self.n_epochs = n_epochs
